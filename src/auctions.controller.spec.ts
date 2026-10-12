@@ -12,6 +12,7 @@ describe('AuctionsController', () => {
   const auctionsService = {
     create: jest.fn().mockResolvedValue(auction),
     getAll: jest.fn().mockResolvedValue([auction]),
+    getById: jest.fn().mockResolvedValue(auction),
   };
   const controller = new AuctionsController(auctionsService as unknown as AuctionsService);
 
@@ -22,6 +23,11 @@ describe('AuctionsController', () => {
   it('returns all auctions from the service', async () => {
     await expect(controller.getAll()).resolves.toEqual([auction]);
     expect(auctionsService.getAll).toHaveBeenCalled();
+  });
+
+  it('returns an auction by id from the service', async () => {
+    await expect(controller.getById('auction-1')).resolves.toEqual(auction);
+    expect(auctionsService.getById).toHaveBeenCalledWith('auction-1');
   });
 
   it('delegates valid auction data to the service', async () => {

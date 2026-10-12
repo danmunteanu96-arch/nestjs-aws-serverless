@@ -1,7 +1,13 @@
-import { InternalServerErrorException, Injectable, Logger } from '@nestjs/common';
+import {
+  InternalServerErrorException,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import {
   AttributeValue,
   DynamoDBClient,
+  GetItemCommand,
   PutItemCommand,
   QueryCommand,
 } from '@aws-sdk/client-dynamodb';
@@ -108,5 +114,46 @@ export class AuctionsService {
     }
 
     return auctions;
+  }
+
+  async getById(id: string): Promise<Auction> {
+    const tableName = process.env.AUCTIONS_TABLE;
+    if (!tableName) {
+      throw new InternalServerErrorException('AUCTIONS_TABLE is not configured');
+    }
+
+    let item;
+    try {
+      const result = await this.dynamoDb.send(
+        new GetItemCommand({
+          TableName: tableName,
+          Key: {
+            id: { S: id },
+          },
+        }),
+      );
+      item = result.Item;
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorStack = error instanceof Error ? error.stack : undefined;
+      this.logger.error(`Failed to retrieve auction from DynamoDB: ${errorMessage}`, errorStack);
+      throw new InternalServerErrorException('Failed to retrieve auction');
+    }
+
+    if (!item) {
+      throw new NotFoundException(`Auction with id ${id} was not found`);
+    }
+
+    const auctionId = item.id?.S;
+    const title = item.title?.S;
+    const status = item.status?.S;
+    const createdAt = item.createdAt?.S;
+
+    if (!auctionId || !title || !status || !createdAt) {
+      this.logger.error(`Auction ${id} is missing required attributes`);
+      throw new InternalServerErrorException('Failed to retrieve auction');
+    }
+
+    return { id: auctionId, title, status, createdAt };
   }
 }

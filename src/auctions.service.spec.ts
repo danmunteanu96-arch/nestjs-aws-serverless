@@ -1,4 +1,10 @@
-import { DynamoDBClient, PutItemCommand, QueryCommand } from '@aws-sdk/client-dynamodb';
+import {
+  DynamoDBClient,
+  GetItemCommand,
+  PutItemCommand,
+  QueryCommand,
+} from '@aws-sdk/client-dynamodb';
+import { NotFoundException } from '@nestjs/common';
 import { AuctionsService } from './auctions.service';
 
 describe('AuctionsService', () => {
@@ -85,6 +91,37 @@ describe('AuctionsService', () => {
       IndexName: 'all-auctions-index',
       ExclusiveStartKey: lastEvaluatedKey,
     });
+  });
+
+  it('gets an auction by its table key', async () => {
+    dynamoDb.send.mockResolvedValueOnce({
+      Item: {
+        id: { S: 'auction-1' },
+        title: { S: 'Vintage camera' },
+        status: { S: 'ACTIVE' },
+        createdAt: { S: '2026-10-10T12:00:00.000Z' },
+      },
+    });
+
+    await expect(service.getById('auction-1')).resolves.toEqual({
+      id: 'auction-1',
+      title: 'Vintage camera',
+      status: 'ACTIVE',
+      createdAt: '2026-10-10T12:00:00.000Z',
+    });
+
+    expect(dynamoDb.send).toHaveBeenCalledWith(expect.any(GetItemCommand));
+    const command = dynamoDb.send.mock.calls[0][0] as GetItemCommand;
+    expect(command.input).toMatchObject({
+      TableName: 'test-auctions',
+      Key: { id: { S: 'auction-1' } },
+    });
+  });
+
+  it('throws not found when the auction does not exist', async () => {
+    dynamoDb.send.mockResolvedValueOnce({});
+
+    await expect(service.getById('missing-auction')).rejects.toThrow(NotFoundException);
   });
 
   it('logs DynamoDB errors and throws a safe server error', async () => {

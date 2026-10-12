@@ -84,10 +84,10 @@
           "S3Bucket": {
             "Ref": "ServerlessDeploymentBucket"
           },
-          "S3Key": "serverless/nestjs-aws-serverless/dev/1791798633114-2026-10-12T09:50:33.114Z/nestjs-aws-serverless.zip"
+          "S3Key": "serverless/nestjs-aws-serverless/dev/1791807682928-2026-10-12T12:21:22.928Z/nestjs-aws-serverless.zip"
         },
         "Handler": "src/lambda.handler",
-        "Runtime": "nodejs20.x",
+        "Runtime": "nodejs24.x",
         "FunctionName": "nestjs-aws-serverless-dev-api",
         "MemorySize": 256,
         "Timeout": 10,
@@ -110,14 +110,14 @@
         "AuctionsApiRole"
       ]
     },
-    "ApiLambdaVersion5zKiCaYfeT5GdUZnXpnQ9Y3avV6QaYPf0jG8QFzec": {
+    "ApiLambdaVersionq1MKr8MKAGQe5BUn2PEIR0zS8yD27wrA1lGyEO2tLU": {
       "Type": "AWS::Lambda::Version",
       "DeletionPolicy": "Retain",
       "Properties": {
         "FunctionName": {
           "Ref": "ApiLambdaFunction"
         },
-        "CodeSha256": "Fax0b2tjktANvDTTZJsYXgODdUvFR8x79GoWWvQLVxE="
+        "CodeSha256": "ucAvEFLZS1r3Ndfke17H/bBUMdN+NtWFqLL35y9/bA0="
       }
     },
     "HttpApi": {
@@ -349,6 +349,18 @@
                 {
                   "Effect": "Allow",
                   "Action": [
+                    "dynamodb:GetItem"
+                  ],
+                  "Resource": {
+                    "Fn::GetAtt": [
+                      "AuctionsTable",
+                      "Arn"
+                    ]
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
                     "dynamodb:Query"
                   ],
                   "Resource": {
@@ -385,7 +397,7 @@
     "ApiLambdaFunctionQualifiedArn": {
       "Description": "Current Lambda function version",
       "Value": {
-        "Ref": "ApiLambdaVersion5zKiCaYfeT5GdUZnXpnQ9Y3avV6QaYPf0jG8QFzec"
+        "Ref": "ApiLambdaVersionq1MKr8MKAGQe5BUn2PEIR0zS8yD27wrA1lGyEO2tLU"
       },
       "Export": {
         "Name": "sls-nestjs-aws-serverless-dev-ApiLambdaFunctionQualifiedArn"
