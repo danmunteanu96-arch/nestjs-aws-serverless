@@ -103,7 +103,7 @@
                 "S3Bucket": {
                   "Ref": "ServerlessDeploymentBucket"
                 },
-                "S3Key": "serverless/nestjs-aws-serverless/dev/1791807682928-2026-10-12T12:21:22.928Z/nestjs-aws-serverless.zip"
+                "S3Key": "serverless/nestjs-aws-serverless/dev/1791815230322-2026-10-12T14:27:10.322Z/nestjs-aws-serverless.zip"
               },
               "Handler": "src/lambda.handler",
               "Runtime": "nodejs24.x",
@@ -129,14 +129,14 @@
               "AuctionsApiRole"
             ]
           },
-          "ApiLambdaVersionq1MKr8MKAGQe5BUn2PEIR0zS8yD27wrA1lGyEO2tLU": {
+          "ApiLambdaVersionU5JuMDhAMQAzx97Ou7y8NXSEhp0TtxrwmUlvao8uq4": {
             "Type": "AWS::Lambda::Version",
             "DeletionPolicy": "Retain",
             "Properties": {
               "FunctionName": {
                 "Ref": "ApiLambdaFunction"
               },
-              "CodeSha256": "ucAvEFLZS1r3Ndfke17H/bBUMdN+NtWFqLL35y9/bA0="
+              "CodeSha256": "eMz5QUuqloHGkQCATFYkXcpfKMTaaNmc/cVZyDEhI6k="
             }
           },
           "HttpApi": {
@@ -322,6 +322,28 @@
                       "status"
                     ]
                   }
+                },
+                {
+                  "IndexName": "auctions-with-bids-index",
+                  "KeySchema": [
+                    {
+                      "AttributeName": "entityType",
+                      "KeyType": "HASH"
+                    },
+                    {
+                      "AttributeName": "createdAt",
+                      "KeyType": "RANGE"
+                    }
+                  ],
+                  "Projection": {
+                    "ProjectionType": "INCLUDE",
+                    "NonKeyAttributes": [
+                      "title",
+                      "status",
+                      "currentBid",
+                      "highestBidderId"
+                    ]
+                  }
                 }
               ]
             }
@@ -365,6 +387,18 @@
                       {
                         "Effect": "Allow",
                         "Action": [
+                          "dynamodb:UpdateItem"
+                        ],
+                        "Resource": {
+                          "Fn::GetAtt": [
+                            "AuctionsTable",
+                            "Arn"
+                          ]
+                        }
+                      },
+                      {
+                        "Effect": "Allow",
+                        "Action": [
                           "dynamodb:GetItem"
                         ],
                         "Resource": {
@@ -389,7 +423,7 @@
                                   "Arn"
                                 ]
                               },
-                              "/index/all-auctions-index"
+                              "/index/auctions-with-bids-index"
                             ]
                           ]
                         }
@@ -413,7 +447,7 @@
           "ApiLambdaFunctionQualifiedArn": {
             "Description": "Current Lambda function version",
             "Value": {
-              "Ref": "ApiLambdaVersionq1MKr8MKAGQe5BUn2PEIR0zS8yD27wrA1lGyEO2tLU"
+              "Ref": "ApiLambdaVersionU5JuMDhAMQAzx97Ou7y8NXSEhp0TtxrwmUlvao8uq4"
             },
             "Export": {
               "Name": "sls-nestjs-aws-serverless-dev-ApiLambdaFunctionQualifiedArn"
@@ -593,7 +627,7 @@
         "timeout": 10,
         "runtime": "nodejs24.x",
         "vpc": {},
-        "versionLogicalId": "ApiLambdaVersionq1MKr8MKAGQe5BUn2PEIR0zS8yD27wrA1lGyEO2tLU"
+        "versionLogicalId": "ApiLambdaVersionU5JuMDhAMQAzx97Ou7y8NXSEhp0TtxrwmUlvao8uq4"
       }
     },
     "resources": {
@@ -668,6 +702,28 @@
                     "status"
                   ]
                 }
+              },
+              {
+                "IndexName": "auctions-with-bids-index",
+                "KeySchema": [
+                  {
+                    "AttributeName": "entityType",
+                    "KeyType": "HASH"
+                  },
+                  {
+                    "AttributeName": "createdAt",
+                    "KeyType": "RANGE"
+                  }
+                ],
+                "Projection": {
+                  "ProjectionType": "INCLUDE",
+                  "NonKeyAttributes": [
+                    "title",
+                    "status",
+                    "currentBid",
+                    "highestBidderId"
+                  ]
+                }
               }
             ]
           }
@@ -711,6 +767,18 @@
                     {
                       "Effect": "Allow",
                       "Action": [
+                        "dynamodb:UpdateItem"
+                      ],
+                      "Resource": {
+                        "Fn::GetAtt": [
+                          "AuctionsTable",
+                          "Arn"
+                        ]
+                      }
+                    },
+                    {
+                      "Effect": "Allow",
+                      "Action": [
                         "dynamodb:GetItem"
                       ],
                       "Resource": {
@@ -735,7 +803,7 @@
                                 "Arn"
                               ]
                             },
-                            "/index/all-auctions-index"
+                            "/index/auctions-with-bids-index"
                           ]
                         ]
                       }
@@ -773,7 +841,7 @@
     "isDashboardMonitoringPreconfigured": false
   },
   "package": {
-    "artifactDirectoryName": "serverless/nestjs-aws-serverless/dev/1791807682928-2026-10-12T12:21:22.928Z",
+    "artifactDirectoryName": "serverless/nestjs-aws-serverless/dev/1791815230322-2026-10-12T14:27:10.322Z",
     "artifact": "nestjs-aws-serverless.zip"
   }
 }

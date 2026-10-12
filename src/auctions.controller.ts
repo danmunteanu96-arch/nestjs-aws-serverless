@@ -1,6 +1,6 @@
-import { BadRequestException, Body, Controller, Get, Param, Post } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Post } from '@nestjs/common';
 import { AuctionsService } from './auctions.service';
-import type { Auction, CreateAuctionInput } from './auctions.service';
+import type { Auction } from './auctions.service';
 
 @Controller('auctions')
 export class AuctionsController {
@@ -17,11 +17,17 @@ export class AuctionsController {
   }
 
   @Post()
-  create(@Body() body: CreateAuctionInput): Promise<Auction> {
-    if (!body?.title || !body?.status) {
-      throw new BadRequestException('title and status are required');
-    }
-
+  create(@Body() body: unknown): Promise<Auction> {
     return this.auctionsService.create(body);
+  }
+
+  @Patch(':id')
+  update(@Param('id') id: string, @Body() body: unknown): Promise<Auction> {
+    return this.auctionsService.update(id, body);
+  }
+
+  @Post(':id/bids')
+  placeBid(@Param('id') id: string, @Body() body: unknown): Promise<Auction> {
+    return this.auctionsService.placeBid(id, body);
   }
 }

@@ -24,6 +24,13 @@ AuctionsApiRole:
                   - Arn
             - Effect: Allow
               Action:
+                - dynamodb:UpdateItem
+              Resource:
+                Fn::GetAtt:
+                  - AuctionsTable
+                  - Arn
+            - Effect: Allow
+              Action:
                 - dynamodb:GetItem
               Resource:
                 Fn::GetAtt:
@@ -38,5 +45,4 @@ AuctionsApiRole:
                   - - Fn::GetAtt:
                         - AuctionsTable
                         - Arn
-                    - '/index/all-auctions-index'
-            
+                    - '/index/auctions-with-bids-index'

@@ -13,8 +13,12 @@ describe('AuctionsController', () => {
     create: jest.fn().mockResolvedValue(auction),
     getAll: jest.fn().mockResolvedValue([auction]),
     getById: jest.fn().mockResolvedValue(auction),
+    update: jest.fn().mockResolvedValue(auction),
+    placeBid: jest.fn().mockResolvedValue(auction),
   };
-  const controller = new AuctionsController(auctionsService as unknown as AuctionsService);
+  const controller = new AuctionsController(
+    auctionsService as unknown as AuctionsService,
+  );
 
   beforeEach(() => {
     jest.clearAllMocks();
@@ -30,6 +34,32 @@ describe('AuctionsController', () => {
     expect(auctionsService.getById).toHaveBeenCalledWith('auction-1');
   });
 
+  it('allows a partial update', async () => {
+    await expect(
+      controller.update('auction-1', { title: 'Updated camera' }),
+    ).resolves.toEqual(auction);
+    expect(auctionsService.update).toHaveBeenCalledWith('auction-1', {
+      title: 'Updated camera',
+    });
+  });
+
+  it('delegates bid placement to the service', async () => {
+    await expect(
+      controller.placeBid('auction-1', { bidderId: 'bidder-1', amount: 20 }),
+    ).resolves.toEqual(auction);
+    expect(auctionsService.placeBid).toHaveBeenCalledWith('auction-1', {
+      bidderId: 'bidder-1',
+      amount: 20,
+    });
+  });
+
+  it('rejects an empty patch body', async () => {
+    await expect(controller.update('auction-1', {})).rejects.toThrow(
+      BadRequestException,
+    );
+    expect(auctionsService.update).not.toHaveBeenCalled();
+  });
+
   it('delegates valid auction data to the service', async () => {
     await expect(
       controller.create({ title: 'Vintage camera', status: 'ACTIVE' }),
@@ -41,9 +71,9 @@ describe('AuctionsController', () => {
   });
 
   it('requires title and status', async () => {
-    await expect(controller.create({ title: '', status: 'ACTIVE' })).rejects.toThrow(
-      BadRequestException,
-    );
+    await expect(
+      controller.create({ title: '', status: 'ACTIVE' }),
+    ).rejects.toThrow(BadRequestException);
     expect(auctionsService.create).not.toHaveBeenCalled();
   });
 });

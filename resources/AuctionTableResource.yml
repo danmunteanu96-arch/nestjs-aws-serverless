@@ -40,3 +40,16 @@ AuctionsTable:
           NonKeyAttributes:
             - title
             - status
+      - IndexName: auctions-with-bids-index
+        KeySchema:
+          - AttributeName: entityType
+            KeyType: HASH
+          - AttributeName: createdAt
+            KeyType: RANGE
+        Projection:
+          ProjectionType: INCLUDE
+          NonKeyAttributes:
+            - title
+            - status
+            - currentBid
+            - highestBidderId
