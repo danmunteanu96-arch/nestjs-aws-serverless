@@ -11,6 +11,26 @@ provider:
   memorySize: 256
   timeout: 10
   stage: ${opt:stage, 'dev'}
+  environment:
+    AUCTIONS_TABLE: ${self:service}-auctions-${sls:stage}
+  iam:
+    role:
+      statements:
+        - Effect: Allow
+          Action: dynamodb:PutItem
+          Resource:
+            Fn::GetAtt:
+              - AuctionsTable
+              - Arn
+        - Effect: Allow
+          Action: dynamodb:Query
+          Resource:
+            Fn::Join:
+              - ''
+              - - Fn::GetAtt:
+                    - AuctionsTable
+                    - Arn
+                - '/index/status-createdAt-index'
 
 custom:
   esbuild:
@@ -36,3 +56,37 @@ functions:
       - httpApi:
           path: '/'
           method: '*'
+      - httpApi:
+          path: '/{proxy+}'
+          method: '*'
+
+resources:
+  Resources:
+    AuctionsTable:
+      Type: AWS::DynamoDB::Table
+      DeletionPolicy: Delete
+      Properties:
+        # Nume dinamic bazat pe serviciu și stage (ex: nestjs-aws-serverless-auctions-dev)
+        TableName: ${self:service}-auctions-${sls:stage}
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+          - AttributeName: status
+            AttributeType: S
+          - AttributeName: createdAt
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        GlobalSecondaryIndexes:
+          - IndexName: status-createdAt-index
+            KeySchema:
+              - AttributeName: status
+                KeyType: HASH
+              - AttributeName: createdAt
+                KeyType: RANGE
+            Projection:
+              ProjectionType: INCLUDE
+              NonKeyAttributes:
+                - title
