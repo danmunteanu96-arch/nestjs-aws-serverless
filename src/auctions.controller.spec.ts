@@ -11,11 +11,17 @@ describe('AuctionsController', () => {
   };
   const auctionsService = {
     create: jest.fn().mockResolvedValue(auction),
+    getAll: jest.fn().mockResolvedValue([auction]),
   };
   const controller = new AuctionsController(auctionsService as unknown as AuctionsService);
 
   beforeEach(() => {
     jest.clearAllMocks();
+  });
+
+  it('returns all auctions from the service', async () => {
+    await expect(controller.getAll()).resolves.toEqual([auction]);
+    expect(auctionsService.getAll).toHaveBeenCalled();
   });
 
   it('delegates valid auction data to the service', async () => {

@@ -12,44 +12,8 @@
       "timeout": 10,
       "stage": "dev",
       "environment": {
-        "AUCTIONS_TABLE": "nestjs-aws-serverless-auctions-dev"
-      },
-      "iam": {
-        "role": {
-          "statements": [
-            {
-              "Effect": "Allow",
-              "Action": [
-                "dynamodb:PutItem"
-              ],
-              "Resource": {
-                "Fn::GetAtt": [
-                  "AuctionsTable",
-                  "Arn"
-                ]
-              }
-            },
-            {
-              "Effect": "Allow",
-              "Action": [
-                "dynamodb:Query"
-              ],
-              "Resource": {
-                "Fn::Join": [
-                  "",
-                  [
-                    {
-                      "Fn::GetAtt": [
-                        "AuctionsTable",
-                        "Arn"
-                      ]
-                    },
-                    "/index/status-createdAt-index"
-                  ]
-                ]
-              }
-            }
-          ]
+        "AUCTIONS_TABLE": {
+          "Ref": "AuctionsTable"
         }
       },
       "versionFunctions": true,
@@ -132,90 +96,6 @@
               "LogGroupName": "/aws/lambda/nestjs-aws-serverless-dev-api"
             }
           },
-          "IamRoleLambdaExecution": {
-            "Type": "AWS::IAM::Role",
-            "Properties": {
-              "AssumeRolePolicyDocument": {
-                "Version": "2012-10-17",
-                "Statement": [
-                  {
-                    "Effect": "Allow",
-                    "Principal": {
-                      "Service": [
-                        "lambda.amazonaws.com"
-                      ]
-                    },
-                    "Action": [
-                      "sts:AssumeRole"
-                    ]
-                  }
-                ]
-              },
-              "Policies": [
-                {
-                  "PolicyName": {
-                    "Fn::Join": [
-                      "-",
-                      [
-                        "nestjs-aws-serverless",
-                        "dev",
-                        "lambda"
-                      ]
-                    ]
-                  },
-                  "PolicyDocument": {
-                    "Version": "2012-10-17",
-                    "Statement": [
-                      {
-                        "Effect": "Allow",
-                        "Action": [
-                          "logs:CreateLogStream",
-                          "logs:CreateLogGroup",
-                          "logs:TagResource"
-                        ],
-                        "Resource": [
-                          {
-                            "Fn::Sub": "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/nestjs-aws-serverless-dev*:*"
-                          }
-                        ]
-                      },
-                      {
-                        "Effect": "Allow",
-                        "Action": [
-                          "logs:PutLogEvents"
-                        ],
-                        "Resource": [
-                          {
-                            "Fn::Sub": "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/nestjs-aws-serverless-dev*:*:*"
-                          }
-                        ]
-                      },
-                      {
-                        "$ref": "$[\"service\"][\"provider\"][\"iam\"][\"role\"][\"statements\"][0]"
-                      },
-                      {
-                        "$ref": "$[\"service\"][\"provider\"][\"iam\"][\"role\"][\"statements\"][1]"
-                      }
-                    ]
-                  }
-                }
-              ],
-              "Path": "/",
-              "RoleName": {
-                "Fn::Join": [
-                  "-",
-                  [
-                    "nestjs-aws-serverless",
-                    "dev",
-                    {
-                      "Ref": "AWS::Region"
-                    },
-                    "lambdaRole"
-                  ]
-                ]
-              }
-            }
-          },
           "ApiLambdaFunction": {
             "Type": "AWS::Lambda::Function",
             "Properties": {
@@ -223,7 +103,7 @@
                 "S3Bucket": {
                   "Ref": "ServerlessDeploymentBucket"
                 },
-                "S3Key": "serverless/nestjs-aws-serverless/dev/1791643465077-2026-10-10T14:44:25.077Z/nestjs-aws-serverless.zip"
+                "S3Key": "serverless/nestjs-aws-serverless/dev/1791798633114-2026-10-12T09:50:33.114Z/nestjs-aws-serverless.zip"
               },
               "Handler": "src/lambda.handler",
               "Runtime": "nodejs20.x",
@@ -232,28 +112,31 @@
               "Timeout": 10,
               "Environment": {
                 "Variables": {
-                  "AUCTIONS_TABLE": "nestjs-aws-serverless-auctions-dev"
+                  "AUCTIONS_TABLE": {
+                    "$ref": "$[\"service\"][\"provider\"][\"environment\"][\"AUCTIONS_TABLE\"]"
+                  }
                 }
               },
               "Role": {
                 "Fn::GetAtt": [
-                  "IamRoleLambdaExecution",
+                  "AuctionsApiRole",
                   "Arn"
                 ]
               }
             },
             "DependsOn": [
-              "ApiLogGroup"
+              "ApiLogGroup",
+              "AuctionsApiRole"
             ]
           },
-          "ApiLambdaVersionY4p8Ap2tkiWBaU39aMr2Rg9z8H2FsyTjPL5ZWppyeYU": {
+          "ApiLambdaVersion5zKiCaYfeT5GdUZnXpnQ9Y3avV6QaYPf0jG8QFzec": {
             "Type": "AWS::Lambda::Version",
             "DeletionPolicy": "Retain",
             "Properties": {
               "FunctionName": {
                 "Ref": "ApiLambdaFunction"
               },
-              "CodeSha256": "9ClGfrwcHq0mOUekex0RFKySSP5jYjPL7zKHxTN+iwY="
+              "CodeSha256": "Fax0b2tjktANvDTTZJsYXgODdUvFR8x79GoWWvQLVxE="
             }
           },
           "HttpApi": {
@@ -371,13 +254,18 @@
           },
           "AuctionsTable": {
             "Type": "AWS::DynamoDB::Table",
-            "DeletionPolicy": "Delete",
+            "DeletionPolicy": "Retain",
+            "UpdateReplacePolicy": "Retain",
             "Properties": {
               "TableName": "nestjs-aws-serverless-auctions-dev",
               "BillingMode": "PAY_PER_REQUEST",
               "AttributeDefinitions": [
                 {
                   "AttributeName": "id",
+                  "AttributeType": "S"
+                },
+                {
+                  "AttributeName": "entityType",
                   "AttributeType": "S"
                 },
                 {
@@ -414,6 +302,88 @@
                       "title"
                     ]
                   }
+                },
+                {
+                  "IndexName": "all-auctions-index",
+                  "KeySchema": [
+                    {
+                      "AttributeName": "entityType",
+                      "KeyType": "HASH"
+                    },
+                    {
+                      "AttributeName": "createdAt",
+                      "KeyType": "RANGE"
+                    }
+                  ],
+                  "Projection": {
+                    "ProjectionType": "INCLUDE",
+                    "NonKeyAttributes": [
+                      "title",
+                      "status"
+                    ]
+                  }
+                }
+              ]
+            }
+          },
+          "AuctionsApiRole": {
+            "Type": "AWS::IAM::Role",
+            "Properties": {
+              "AssumeRolePolicyDocument": {
+                "Version": "2012-10-17",
+                "Statement": [
+                  {
+                    "Effect": "Allow",
+                    "Principal": {
+                      "Service": "lambda.amazonaws.com"
+                    },
+                    "Action": "sts:AssumeRole"
+                  }
+                ]
+              },
+              "ManagedPolicyArns": [
+                "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+              ],
+              "Policies": [
+                {
+                  "PolicyName": "auctions-table-write",
+                  "PolicyDocument": {
+                    "Version": "2012-10-17",
+                    "Statement": [
+                      {
+                        "Effect": "Allow",
+                        "Action": [
+                          "dynamodb:PutItem"
+                        ],
+                        "Resource": {
+                          "Fn::GetAtt": [
+                            "AuctionsTable",
+                            "Arn"
+                          ]
+                        }
+                      },
+                      {
+                        "Effect": "Allow",
+                        "Action": [
+                          "dynamodb:Query"
+                        ],
+                        "Resource": {
+                          "Fn::Join": [
+                            "",
+                            [
+                              {
+                                "Fn::GetAtt": [
+                                  "AuctionsTable",
+                                  "Arn"
+                                ]
+                              },
+                              "/index/all-auctions-index"
+                            ]
+                          ]
+                        }
+                      }
+                    ]
+                  }
                 }
               ]
             }
@@ -431,7 +401,7 @@
           "ApiLambdaFunctionQualifiedArn": {
             "Description": "Current Lambda function version",
             "Value": {
-              "Ref": "ApiLambdaVersionY4p8Ap2tkiWBaU39aMr2Rg9z8H2FsyTjPL5ZWppyeYU"
+              "Ref": "ApiLambdaVersion5zKiCaYfeT5GdUZnXpnQ9Y3avV6QaYPf0jG8QFzec"
             },
             "Export": {
               "Name": "sls-nestjs-aws-serverless-dev-ApiLambdaFunctionQualifiedArn"
@@ -584,6 +554,9 @@
     "functions": {
       "api": {
         "handler": "src/lambda.handler",
+        "role": {
+          "$ref": "$[\"service\"][\"provider\"][\"compiledCloudFormationTemplate\"][\"Resources\"][\"ApiLambdaFunction\"][\"Properties\"][\"Role\"]"
+        },
         "events": [
           {
             "httpApi": {
@@ -608,20 +581,25 @@
         "timeout": 10,
         "runtime": "nodejs20.x",
         "vpc": {},
-        "versionLogicalId": "ApiLambdaVersionY4p8Ap2tkiWBaU39aMr2Rg9z8H2FsyTjPL5ZWppyeYU"
+        "versionLogicalId": "ApiLambdaVersion5zKiCaYfeT5GdUZnXpnQ9Y3avV6QaYPf0jG8QFzec"
       }
     },
     "resources": {
       "Resources": {
         "AuctionsTable": {
           "Type": "AWS::DynamoDB::Table",
-          "DeletionPolicy": "Delete",
+          "DeletionPolicy": "Retain",
+          "UpdateReplacePolicy": "Retain",
           "Properties": {
             "TableName": "nestjs-aws-serverless-auctions-dev",
             "BillingMode": "PAY_PER_REQUEST",
             "AttributeDefinitions": [
               {
                 "AttributeName": "id",
+                "AttributeType": "S"
+              },
+              {
+                "AttributeName": "entityType",
                 "AttributeType": "S"
               },
               {
@@ -658,6 +636,88 @@
                     "title"
                   ]
                 }
+              },
+              {
+                "IndexName": "all-auctions-index",
+                "KeySchema": [
+                  {
+                    "AttributeName": "entityType",
+                    "KeyType": "HASH"
+                  },
+                  {
+                    "AttributeName": "createdAt",
+                    "KeyType": "RANGE"
+                  }
+                ],
+                "Projection": {
+                  "ProjectionType": "INCLUDE",
+                  "NonKeyAttributes": [
+                    "title",
+                    "status"
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        "AuctionsApiRole": {
+          "Type": "AWS::IAM::Role",
+          "Properties": {
+            "AssumeRolePolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Principal": {
+                    "Service": "lambda.amazonaws.com"
+                  },
+                  "Action": "sts:AssumeRole"
+                }
+              ]
+            },
+            "ManagedPolicyArns": [
+              "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+            ],
+            "Policies": [
+              {
+                "PolicyName": "auctions-table-write",
+                "PolicyDocument": {
+                  "Version": "2012-10-17",
+                  "Statement": [
+                    {
+                      "Effect": "Allow",
+                      "Action": [
+                        "dynamodb:PutItem"
+                      ],
+                      "Resource": {
+                        "Fn::GetAtt": [
+                          "AuctionsTable",
+                          "Arn"
+                        ]
+                      }
+                    },
+                    {
+                      "Effect": "Allow",
+                      "Action": [
+                        "dynamodb:Query"
+                      ],
+                      "Resource": {
+                        "Fn::Join": [
+                          "",
+                          [
+                            {
+                              "Fn::GetAtt": [
+                                "AuctionsTable",
+                                "Arn"
+                              ]
+                            },
+                            "/index/all-auctions-index"
+                          ]
+                        ]
+                      }
+                    }
+                  ]
+                }
               }
             ]
           }
@@ -689,7 +749,7 @@
     "isDashboardMonitoringPreconfigured": false
   },
   "package": {
-    "artifactDirectoryName": "serverless/nestjs-aws-serverless/dev/1791643465077-2026-10-10T14:44:25.077Z",
+    "artifactDirectoryName": "serverless/nestjs-aws-serverless/dev/1791798633114-2026-10-12T09:50:33.114Z",
     "artifact": "nestjs-aws-serverless.zip"
   }
 }

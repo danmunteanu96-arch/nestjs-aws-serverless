@@ -7,30 +7,13 @@ plugins:
 provider:
   name: aws
   runtime: nodejs20.x
-  region: eu-central-1 
+  region: eu-central-1
   memorySize: 256
   timeout: 10
   stage: ${opt:stage, 'dev'}
   environment:
-    AUCTIONS_TABLE: ${self:service}-auctions-${sls:stage}
-  iam:
-    role:
-      statements:
-        - Effect: Allow
-          Action: dynamodb:PutItem
-          Resource:
-            Fn::GetAtt:
-              - AuctionsTable
-              - Arn
-        - Effect: Allow
-          Action: dynamodb:Query
-          Resource:
-            Fn::Join:
-              - ''
-              - - Fn::GetAtt:
-                    - AuctionsTable
-                    - Arn
-                - '/index/status-createdAt-index'
+    AUCTIONS_TABLE:
+      Ref: AuctionsTable
 
 custom:
   esbuild:
@@ -45,13 +28,18 @@ custom:
       - 'cache-manager'
       - 'class-transformer'
       - 'class-validator'
-    target: node20 
+    target: node20
     platform: node
     concurrency: 10
+  
 
 functions:
   api:
     handler: src/lambda.handler
+    role:
+      Fn::GetAtt:
+        - AuctionsApiRole
+        - Arn
     events:
       - httpApi:
           path: '/'
@@ -62,31 +50,5 @@ functions:
 
 resources:
   Resources:
-    AuctionsTable:
-      Type: AWS::DynamoDB::Table
-      DeletionPolicy: Delete
-      Properties:
-        # Nume dinamic bazat pe serviciu și stage (ex: nestjs-aws-serverless-auctions-dev)
-        TableName: ${self:service}-auctions-${sls:stage}
-        BillingMode: PAY_PER_REQUEST
-        AttributeDefinitions:
-          - AttributeName: id
-            AttributeType: S
-          - AttributeName: status
-            AttributeType: S
-          - AttributeName: createdAt
-            AttributeType: S
-        KeySchema:
-          - AttributeName: id
-            KeyType: HASH
-        GlobalSecondaryIndexes:
-          - IndexName: status-createdAt-index
-            KeySchema:
-              - AttributeName: status
-                KeyType: HASH
-              - AttributeName: createdAt
-                KeyType: RANGE
-            Projection:
-              ProjectionType: INCLUDE
-              NonKeyAttributes:
-                - title
+    AuctionsTable: ${file(./resources/AuctionTableResource.yml):AuctionsTable}
+    AuctionsApiRole: ${file(./iam/AuctionTableIAM.yml):AuctionsApiRole}

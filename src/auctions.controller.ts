@@ -1,10 +1,15 @@
-import { BadRequestException, Body, Controller, Post } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, Post } from '@nestjs/common';
 import { AuctionsService } from './auctions.service';
 import type { Auction, CreateAuctionInput } from './auctions.service';
 
 @Controller('auctions')
 export class AuctionsController {
   constructor(private readonly auctionsService: AuctionsService) {}
+
+  @Get()
+  getAll(): Promise<Auction[]> {
+    return this.auctionsService.getAll();
+  }
 
   @Post()
   create(@Body() body: CreateAuctionInput): Promise<Auction> {
