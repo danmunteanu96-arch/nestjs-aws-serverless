@@ -7,11 +7,13 @@ describe('AuctionsController', () => {
     id: 'auction-1',
     title: 'Vintage camera',
     status: 'ACTIVE',
+    endDate: '2026-10-20T10:00:00.000Z',
     createdAt: '2026-10-10T12:00:00.000Z',
   };
   const auctionsService = {
     create: jest.fn().mockResolvedValue(auction),
     getAll: jest.fn().mockResolvedValue([auction]),
+    getActiveAuctions: jest.fn().mockResolvedValue([auction]),
     getById: jest.fn().mockResolvedValue(auction),
     update: jest.fn().mockResolvedValue(auction),
     placeBid: jest.fn().mockResolvedValue(auction),
@@ -32,6 +34,11 @@ describe('AuctionsController', () => {
   it('returns an auction by id from the service', async () => {
     await expect(controller.getById('auction-1')).resolves.toEqual(auction);
     expect(auctionsService.getById).toHaveBeenCalledWith('auction-1');
+  });
+
+  it('returns active auctions from the service', async () => {
+    await expect(controller.getActiveAuctions()).resolves.toEqual([auction]);
+    expect(auctionsService.getActiveAuctions).toHaveBeenCalled();
   });
 
   it('allows a partial update', async () => {
@@ -62,11 +69,16 @@ describe('AuctionsController', () => {
 
   it('delegates valid auction data to the service', async () => {
     await expect(
-      controller.create({ title: 'Vintage camera', status: 'ACTIVE' }),
+      controller.create({
+        title: 'Vintage camera',
+        status: 'ACTIVE',
+        endDate: '2026-10-20T12:00:00+02:00',
+      }),
     ).resolves.toEqual(auction);
     expect(auctionsService.create).toHaveBeenCalledWith({
       title: 'Vintage camera',
       status: 'ACTIVE',
+      endDate: '2026-10-20T10:00:00.000Z',
     });
   });
 

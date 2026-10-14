@@ -36,6 +36,7 @@ describe('AuctionsService', () => {
     const auction = await service.create({
       title: 'Vintage camera',
       status: 'ACTIVE',
+      endDate: '2026-10-20T12:00:00+02:00',
     });
 
     expect(dynamoDb.send).toHaveBeenCalledWith(expect.any(PutItemCommand));
@@ -47,12 +48,49 @@ describe('AuctionsService', () => {
         entityType: { S: 'AUCTION' },
         title: { S: 'Vintage camera' },
         status: { S: 'ACTIVE' },
+        endDate: { S: '2026-10-20T10:00:00.000Z' },
         createdAt: { S: auction.createdAt },
         currentBid: { N: '0' },
       },
     });
     expect(new Date(auction.createdAt).toISOString()).toBe(auction.createdAt);
     expect(auction.currentBid).toBe(0);
+    expect(auction.endDate).toBe('2026-10-20T10:00:00.000Z');
+  });
+
+  it('queries active auctions by ending date', async () => {
+    dynamoDb.send.mockResolvedValueOnce({
+      Items: [
+        {
+          id: { S: 'auction-1' },
+          title: { S: 'Vintage camera' },
+          status: { S: 'ACTIVE' },
+          endDate: { S: '2026-10-20T10:00:00.000Z' },
+          createdAt: { S: '2026-10-10T12:00:00.000Z' },
+          currentBid: { N: '25' },
+        },
+      ],
+    });
+
+    await expect(service.getActiveAuctions()).resolves.toEqual([
+      {
+        id: 'auction-1',
+        title: 'Vintage camera',
+        status: 'ACTIVE',
+        endDate: '2026-10-20T10:00:00.000Z',
+        createdAt: '2026-10-10T12:00:00.000Z',
+        currentBid: 25,
+      },
+    ]);
+
+    const command = dynamoDb.send.mock.calls[0][0] as QueryCommand;
+    expect(command.input).toMatchObject({
+      TableName: 'test-auctions',
+      IndexName: 'status-endDate-index',
+      KeyConditionExpression: '#status = :active',
+      ExpressionAttributeValues: { ':active': { S: 'ACTIVE' } },
+      ScanIndexForward: true,
+    });
   });
 
   it('queries every page of the all-auctions index', async () => {
@@ -60,6 +98,7 @@ describe('AuctionsService', () => {
       id: { S: 'auction-1' },
       title: { S: 'Vintage camera' },
       status: { S: 'ACTIVE' },
+      endDate: { S: '2026-10-20T10:00:00.000Z' },
       createdAt: { S: '2026-10-10T12:00:00.000Z' },
       currentBid: { N: '25' },
     };
@@ -67,13 +106,14 @@ describe('AuctionsService', () => {
       id: { S: 'auction-2' },
       title: { S: 'Old radio' },
       status: { S: 'CLOSED' },
+      endDate: { S: '2026-10-21T10:00:00.000Z' },
       createdAt: { S: '2026-10-11T12:00:00.000Z' },
       currentBid: { N: '50' },
       highestBidderId: { S: 'bidder-2' },
     };
     const lastEvaluatedKey = {
-      entityType: { S: 'AUCTION' },
-      createdAt: { S: firstAuction.createdAt.S },
+      status: { S: 'ACTIVE' },
+      endDate: { S: firstAuction.endDate.S },
       id: { S: firstAuction.id.S },
     };
     dynamoDb.send
@@ -81,6 +121,7 @@ describe('AuctionsService', () => {
         Items: [firstAuction],
         LastEvaluatedKey: lastEvaluatedKey,
       })
+      .mockResolvedValueOnce({ Items: [] })
       .mockResolvedValueOnce({ Items: [secondAuction] });
 
     await expect(service.getAll()).resolves.toEqual([
@@ -88,6 +129,7 @@ describe('AuctionsService', () => {
         id: 'auction-1',
         title: 'Vintage camera',
         status: 'ACTIVE',
+        endDate: '2026-10-20T10:00:00.000Z',
         createdAt: '2026-10-10T12:00:00.000Z',
         currentBid: 25,
       },
@@ -95,20 +137,29 @@ describe('AuctionsService', () => {
         id: 'auction-2',
         title: 'Old radio',
         status: 'CLOSED',
+        endDate: '2026-10-21T10:00:00.000Z',
         createdAt: '2026-10-11T12:00:00.000Z',
         currentBid: 50,
         highestBidderId: 'bidder-2',
       },
     ]);
 
-    expect(dynamoDb.send).toHaveBeenCalledTimes(2);
+    expect(dynamoDb.send).toHaveBeenCalledTimes(3);
     expect(dynamoDb.send).toHaveBeenNthCalledWith(1, expect.any(QueryCommand));
     expect(dynamoDb.send).toHaveBeenNthCalledWith(2, expect.any(QueryCommand));
+    expect(dynamoDb.send).toHaveBeenNthCalledWith(3, expect.any(QueryCommand));
     const secondQuery = dynamoDb.send.mock.calls[1][0] as QueryCommand;
     expect(secondQuery.input).toMatchObject({
       TableName: 'test-auctions',
-      IndexName: 'auctions-with-bids-index',
+      IndexName: 'status-endDate-index',
+      KeyConditionExpression: '#status = :status',
+      ExpressionAttributeValues: { ':status': { S: 'ACTIVE' } },
       ExclusiveStartKey: lastEvaluatedKey,
+    });
+    const closedAuctionsQuery = dynamoDb.send.mock.calls[2][0] as QueryCommand;
+    expect(closedAuctionsQuery.input).toMatchObject({
+      IndexName: 'status-endDate-index',
+      ExpressionAttributeValues: { ':status': { S: 'CLOSED' } },
     });
   });
 
@@ -118,6 +169,7 @@ describe('AuctionsService', () => {
         id: { S: 'auction-1' },
         title: { S: 'Vintage camera' },
         status: { S: 'ACTIVE' },
+        endDate: { S: '2026-10-20T10:00:00.000Z' },
         createdAt: { S: '2026-10-10T12:00:00.000Z' },
         currentBid: { N: '25' },
       },
@@ -127,6 +179,7 @@ describe('AuctionsService', () => {
       id: 'auction-1',
       title: 'Vintage camera',
       status: 'ACTIVE',
+      endDate: '2026-10-20T10:00:00.000Z',
       createdAt: '2026-10-10T12:00:00.000Z',
       currentBid: 25,
     });
@@ -234,13 +287,31 @@ describe('AuctionsService', () => {
       });
 
     await expect(
-      service.placeBid('auction-1', { bidderId: 'bidder-2', amount: 40 }),
+      service.placeBid('auction-1', { bidderId: 'bidder-2', amount: 39 }),
     ).rejects.toThrow(ConflictException);
+  });
+
+  it('returns not found when placing a bid on a missing auction', async () => {
+    const conditionalError = new Error('Condition failed');
+    conditionalError.name = 'ConditionalCheckFailedException';
+    dynamoDb.send
+      .mockRejectedValueOnce(conditionalError)
+      .mockResolvedValueOnce({});
+
+    await expect(
+      service.placeBid('missing-auction', {
+        bidderId: 'bidder-1',
+        amount: 10,
+      }),
+    ).rejects.toThrow(NotFoundException);
   });
 
   it('rejects invalid auction, update, bid, and id inputs', async () => {
     await expect(
       service.create({ title: ' ', status: 'ACTIVE' }),
+    ).rejects.toThrow(BadRequestException);
+    await expect(
+      service.create({ title: 'Vintage camera', status: 'ACTIVE' }),
     ).rejects.toThrow(BadRequestException);
     await expect(service.update('auction-1', {})).rejects.toThrow(
       BadRequestException,

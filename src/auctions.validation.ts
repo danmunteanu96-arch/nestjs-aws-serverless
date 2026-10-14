@@ -6,7 +6,7 @@ import type {
 } from './auctions.types';
 
 const allowedStatuses = new Set(['ACTIVE', 'CLOSED']);
-const allowedAuctionFields = new Set(['title', 'status']);
+const allowedAuctionFields = new Set(['title', 'status', 'endDate']);
 
 function asObject(value: unknown, label: string): Record<string, unknown> {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
@@ -46,6 +46,24 @@ function parseStatus(value: unknown): CreateAuctionInput['status'] {
   return value as CreateAuctionInput['status'];
 }
 
+function parseEndDate(value: unknown): string {
+  if (
+    typeof value !== 'string' ||
+    !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.test(
+      value.trim(),
+    )
+  ) {
+    throw new BadRequestException('endDate must be a valid ISO 8601 date');
+  }
+
+  const date = new Date(value.trim());
+  if (!Number.isFinite(date.getTime())) {
+    throw new BadRequestException('endDate must be a valid ISO 8601 date');
+  }
+
+  return date.toISOString();
+}
+
 export function parseAuctionId(value: unknown): string {
   if (typeof value !== 'string' || !value.trim() || value.trim().length > 128) {
     throw new BadRequestException(
@@ -63,6 +81,7 @@ export function parseCreateAuctionInput(value: unknown): CreateAuctionInput {
   return {
     title: parseTitle(input.title),
     status: parseStatus(input.status),
+    endDate: parseEndDate(input.endDate),
   };
 }
 
@@ -80,6 +99,9 @@ export function parseUpdateAuctionInput(value: unknown): UpdateAuctionInput {
   }
   if (Object.hasOwn(input, 'status')) {
     update.status = parseStatus(input.status);
+  }
+  if (Object.hasOwn(input, 'endDate')) {
+    update.endDate = parseEndDate(input.endDate);
   }
 
   return update;

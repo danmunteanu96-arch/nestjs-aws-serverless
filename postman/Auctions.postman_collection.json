@@ -1,0 +1,271 @@
+{
+  "info": {
+    "name": "Serverless Auctions API",
+    "description": "End-to-end auction flow. Run requests in order; wait approximately 5-10 minutes before verifying auto-close.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "https://peyyy5541k.execute-api.eu-central-1.amazonaws.com"
+    },
+    {
+      "key": "auctionId",
+      "value": ""
+    },
+    {
+      "key": "endDate",
+      "value": ""
+    },
+    {
+      "key": "bidderId",
+      "value": "postman-bidder"
+    },
+    {
+      "key": "updatedTitle",
+      "value": "Postman test auction updated"
+    }
+  ],
+  "item": [
+    {
+      "name": "Get all auctions",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/auctions"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Returns all auctions', function () {",
+              "  pm.response.to.have.status(200);",
+              "  pm.expect(pm.response.json()).to.be.an('array');",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Create auction (ends in 5 minutes)",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const endDate = new Date(Date.now() + 5 * 60 * 1000).toISOString();",
+              "pm.collectionVariables.set('endDate', endDate);"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Auction was created', function () {",
+              "  pm.response.to.have.status(201);",
+              "  const auction = pm.response.json();",
+              "  pm.expect(auction.id).to.be.a('string');",
+              "  pm.expect(auction.status).to.eql('ACTIVE');",
+              "  pm.expect(auction.endDate).to.eql(pm.collectionVariables.get('endDate'));",
+              "  pm.collectionVariables.set('auctionId', auction.id);",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"title\": \"Postman test auction\",\n  \"status\": \"ACTIVE\",\n  \"endDate\": \"{{endDate}}\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": "{{baseUrl}}/auctions"
+      }
+    },
+    {
+      "name": "Get auction by ID",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/auctions/{{auctionId}}"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Returns the created auction and its end date', function () {",
+              "  pm.response.to.have.status(200);",
+              "  const auction = pm.response.json();",
+              "  pm.expect(auction.id).to.eql(pm.collectionVariables.get('auctionId'));",
+              "  pm.expect(auction.endDate).to.be.a('string');",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Update auction title",
+      "request": {
+        "method": "PATCH",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"title\": \"{{updatedTitle}}\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": "{{baseUrl}}/auctions/{{auctionId}}"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Auction was updated', function () {",
+              "  pm.response.to.have.status(200);",
+              "  const auction = pm.response.json();",
+              "  pm.expect(auction.title).to.eql(pm.collectionVariables.get('updatedTitle'));",
+              "  pm.expect(auction.endDate).to.be.a('string');",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Place bid",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"bidderId\": \"{{bidderId}}\",\n  \"amount\": 25\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": "{{baseUrl}}/auctions/{{auctionId}}/bids"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Bid was accepted', function () {",
+              "  pm.response.to.have.status(201);",
+              "  const auction = pm.response.json();",
+              "  pm.expect(auction.currentBid).to.eql(25);",
+              "  pm.expect(auction.highestBidderId).to.eql(pm.collectionVariables.get('bidderId'));",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Get active auctions",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/auctions/active"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Active list contains the test auction with endDate', function () {",
+              "  pm.response.to.have.status(200);",
+              "  const auctions = pm.response.json();",
+              "  const auction = auctions.find((item) => item.id === pm.collectionVariables.get('auctionId'));",
+              "  pm.expect(auction).to.exist;",
+              "  pm.expect(auction.endDate).to.be.a('string');",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Verify auction appears in all auctions",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/auctions"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('All-auctions list includes endDate', function () {",
+              "  pm.response.to.have.status(200);",
+              "  const auctions = pm.response.json();",
+              "  const auction = auctions.find((item) => item.id === pm.collectionVariables.get('auctionId'));",
+              "  pm.expect(auction).to.exist;",
+              "  pm.expect(auction.endDate).to.be.a('string');",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Verify auto-close (run after deadline + up to 5 minutes)",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/auctions/{{auctionId}}"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Expired auction was automatically closed', function () {",
+              "  pm.response.to.have.status(200);",
+              "  const auction = pm.response.json();",
+              "  pm.expect(auction.status).to.eql('CLOSED');",
+              "});"
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

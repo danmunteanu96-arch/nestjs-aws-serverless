@@ -44,6 +44,7 @@ export class AuctionsService {
       id: crypto.randomUUID(),
       title: validInput.title,
       status: validInput.status,
+      endDate: validInput.endDate,
       createdAt: new Date().toISOString(),
       currentBid: 0,
     };
@@ -57,6 +58,7 @@ export class AuctionsService {
             entityType: { S: 'AUCTION' },
             title: { S: auction.title },
             status: { S: auction.status },
+            endDate: { S: validInput.endDate },
             createdAt: { S: auction.createdAt },
             currentBid: { N: '0' },
           },
@@ -85,6 +87,60 @@ export class AuctionsService {
     }
 
     const auctions: Auction[] = [];
+    try {
+      for (const status of ['ACTIVE', 'CLOSED'] as const) {
+        let exclusiveStartKey: Record<string, AttributeValue> | undefined;
+
+        do {
+          const result = await this.dynamoDb.send(
+            new QueryCommand({
+              TableName: tableName,
+              IndexName: 'status-endDate-index',
+              KeyConditionExpression: '#status = :status',
+              ExpressionAttributeNames: {
+                '#status': 'status',
+              },
+              ExpressionAttributeValues: {
+                ':status': { S: status },
+              },
+              ExclusiveStartKey: exclusiveStartKey,
+            }),
+          );
+
+          for (const item of result.Items ?? []) {
+            auctions.push(this.toAuction(item));
+          }
+
+          exclusiveStartKey = result.LastEvaluatedKey;
+        } while (exclusiveStartKey);
+      }
+
+      auctions.sort((first, second) =>
+        first.createdAt.localeCompare(second.createdAt),
+      );
+    } catch (error: unknown) {
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+      const errorStack = error instanceof Error ? error.stack : undefined;
+      this.logger.error(
+        `Failed to retrieve auctions from DynamoDB: ${errorMessage}`,
+        errorStack,
+      );
+      throw new InternalServerErrorException('Failed to retrieve auctions');
+    }
+
+    return auctions;
+  }
+
+  async getActiveAuctions(): Promise<Auction[]> {
+    const tableName = process.env.AUCTIONS_TABLE;
+    if (!tableName) {
+      throw new InternalServerErrorException(
+        'AUCTIONS_TABLE is not configured',
+      );
+    }
+
+    const auctions: Auction[] = [];
     let exclusiveStartKey: Record<string, AttributeValue> | undefined;
 
     try {
@@ -92,14 +148,15 @@ export class AuctionsService {
         const result = await this.dynamoDb.send(
           new QueryCommand({
             TableName: tableName,
-            IndexName: 'auctions-with-bids-index',
-            KeyConditionExpression: '#entityType = :auction',
+            IndexName: 'status-endDate-index',
+            KeyConditionExpression: '#status = :active',
             ExpressionAttributeNames: {
-              '#entityType': 'entityType',
+              '#status': 'status',
             },
             ExpressionAttributeValues: {
-              ':auction': { S: 'AUCTION' },
+              ':active': { S: 'ACTIVE' },
             },
+            ScanIndexForward: true,
             ExclusiveStartKey: exclusiveStartKey,
           }),
         );
@@ -115,10 +172,12 @@ export class AuctionsService {
         error instanceof Error ? error.message : String(error);
       const errorStack = error instanceof Error ? error.stack : undefined;
       this.logger.error(
-        `Failed to retrieve auctions from DynamoDB: ${errorMessage}`,
+        `Failed to retrieve active auctions from DynamoDB: ${errorMessage}`,
         errorStack,
       );
-      throw new InternalServerErrorException('Failed to retrieve auctions');
+      throw new InternalServerErrorException(
+        'Failed to retrieve active auctions',
+      );
     }
 
     return auctions;
@@ -187,6 +246,12 @@ export class AuctionsService {
       updates.push('#status = :status');
       expressionAttributeNames['#status'] = 'status';
       expressionAttributeValues[':status'] = { S: validInput.status };
+    }
+
+    if (validInput.endDate !== undefined) {
+      updates.push('#endDate = :endDate');
+      expressionAttributeNames['#endDate'] = 'endDate';
+      expressionAttributeValues[':endDate'] = { S: validInput.endDate };
     }
 
     let attributes;
@@ -311,6 +376,7 @@ export class AuctionsService {
     const currentBid =
       item.currentBid?.N === undefined ? 0 : Number(item.currentBid.N);
     const highestBidderId = item.highestBidderId?.S;
+  const endDate = item.endDate?.S;
 
     if (
       !id ||
@@ -331,6 +397,7 @@ export class AuctionsService {
       title,
       status: status as Auction['status'],
       createdAt,
+      ...(endDate ? { endDate } : {}),
       currentBid,
       ...(highestBidderId ? { highestBidderId } : {}),
     };

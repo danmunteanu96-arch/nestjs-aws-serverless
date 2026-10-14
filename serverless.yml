@@ -47,6 +47,17 @@ functions:
       - httpApi:
           path: '/{proxy+}'
           method: '*'
+  closeExpiredAuctions:
+    handler: src/auction-expiration.handler
+    role:
+      Fn::GetAtt:
+        - AuctionsApiRole
+        - Arn
+    timeout: 60
+    events:
+      - schedule:
+          rate: rate(5 minutes)
+          enabled: true
 
 resources:
   Resources:

@@ -40,9 +40,15 @@ AuctionsApiRole:
               Action:
                 - dynamodb:Query
               Resource:
-                Fn::Join:
-                  - ''
-                  - - Fn::GetAtt:
-                        - AuctionsTable
-                        - Arn
-                    - '/index/auctions-with-bids-index'
+                - Fn::Join:
+                    - ''
+                    - - Fn::GetAtt:
+                          - AuctionsTable
+                          - Arn
+                      - '/index/auctions-with-bids-index'
+                - Fn::Join:
+                    - ''
+                    - - Fn::GetAtt:
+                          - AuctionsTable
+                          - Arn
+                      - '/index/status-endDate-index'

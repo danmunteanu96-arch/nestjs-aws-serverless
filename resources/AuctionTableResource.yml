@@ -15,6 +15,8 @@ AuctionsTable:
         AttributeType: S
       - AttributeName: createdAt
         AttributeType: S
+      - AttributeName: endDate
+        AttributeType: S
     KeySchema:
       - AttributeName: id
         KeyType: HASH
@@ -51,5 +53,18 @@ AuctionsTable:
           NonKeyAttributes:
             - title
             - status
+            - currentBid
+            - highestBidderId
+      - IndexName: status-endDate-index
+        KeySchema:
+          - AttributeName: status
+            KeyType: HASH
+          - AttributeName: endDate
+            KeyType: RANGE
+        Projection:
+          ProjectionType: INCLUDE
+          NonKeyAttributes:
+            - title
+            - createdAt
             - currentBid
             - highestBidderId

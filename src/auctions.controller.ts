@@ -11,6 +11,11 @@ export class AuctionsController {
     return this.auctionsService.getAll();
   }
 
+  @Get('active')
+  getActiveAuctions(): Promise<Auction[]> {
+    return this.auctionsService.getActiveAuctions();
+  }
+
   @Get(':id')
   getById(@Param('id') id: string): Promise<Auction> {
     return this.auctionsService.getById(id);
