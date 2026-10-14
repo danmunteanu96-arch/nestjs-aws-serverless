@@ -1,4 +1,3 @@
-import { randomUUID } from 'node:crypto';
 import {
   CallHandler,
   ExecutionContext,
@@ -18,15 +17,8 @@ export class RequestLoggingInterceptor implements NestInterceptor {
     const http = context.switchToHttp();
     const request = http.getRequest<Request>();
     const response = http.getResponse<Response>();
-    const incomingRequestId = response.locals.requestId as string | undefined;
-    const requestId =
-      incomingRequestId && /^[A-Za-z0-9._:-]{1,128}$/.test(incomingRequestId)
-        ? incomingRequestId
-        : randomUUID();
+    const requestId = response.locals.requestId as string;
     const startedAt = Date.now();
-
-    response.locals.requestId = requestId;
-    response.setHeader('x-request-id', requestId);
 
     return next.handle().pipe(
       tap({
