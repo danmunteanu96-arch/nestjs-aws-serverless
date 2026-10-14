@@ -48,7 +48,6 @@ The shared DynamoDB client uses three bounded SDK attempts. API and expiration f
 
 - Before production deployment, configure an AWS Budget alert and Cost Anomaly Detection in the account. These require account-specific thresholds and notification destinations and are not created by this application stack.
 - Set `RESOURCE_OWNER` and `CORS_ORIGINS` for the target deployment. Set `DYNAMODB_PITR_ENABLED=true` for production backups; PITR is disabled by default to avoid development cost.
-- The deadline migration defaults to dry-run; `npm run migrate:auction-end-dates -- --apply` assigns missing dates as `createdAt + 7 days`.
 - Import `postman/Auctions.postman_collection.json` to exercise the API and wait through the five-minute expiration interval.
 - This learning API currently has no authentication or API Gateway throttling, and collection reads are unpaginated. Add these before exposing it to untrusted production clients or large data volumes.
 - The dev table is currently empty after the requested test-data cleanup. Create fresh records with Postman before exercising auction routes.

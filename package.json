@@ -19,8 +19,7 @@
     "test:watch": "node --experimental-vm-modules ./node_modules/jest/bin/jest.js --watch",
     "test:cov": "node --experimental-vm-modules ./node_modules/jest/bin/jest.js --coverage",
     "test:debug": "node --experimental-vm-modules --inspect-brk ./node_modules/jest/bin/jest.js --runInBand",
-    "test:e2e": "node --experimental-vm-modules ./node_modules/jest/bin/jest.js --config ./test/jest-e2e.json",
-    "migrate:auction-end-dates": "node scripts/backfill-auction-end-dates.cjs"
+    "test:e2e": "node --experimental-vm-modules ./node_modules/jest/bin/jest.js --config ./test/jest-e2e.json"
   },
   "dependencies": {
     "@aws-sdk/client-dynamodb": "^3.1149.0",
