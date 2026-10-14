@@ -77,6 +77,12 @@
         "LogGroupName": "/aws/lambda/nestjs-aws-serverless-dev-api"
       }
     },
+    "CloseExpiredAuctionsLogGroup": {
+      "Type": "AWS::Logs::LogGroup",
+      "Properties": {
+        "LogGroupName": "/aws/lambda/nestjs-aws-serverless-dev-closeExpiredAuctions"
+      }
+    },
     "ApiLambdaFunction": {
       "Type": "AWS::Lambda::Function",
       "Properties": {
@@ -84,7 +90,7 @@
           "S3Bucket": {
             "Ref": "ServerlessDeploymentBucket"
           },
-          "S3Key": "serverless/nestjs-aws-serverless/dev/1791815230322-2026-10-12T14:27:10.322Z/nestjs-aws-serverless.zip"
+          "S3Key": "serverless/nestjs-aws-serverless/dev/1791978794047-2026-10-14T11:53:14.047Z/nestjs-aws-serverless.zip"
         },
         "Handler": "src/lambda.handler",
         "Runtime": "nodejs24.x",
@@ -110,14 +116,94 @@
         "AuctionsApiRole"
       ]
     },
-    "ApiLambdaVersionU5JuMDhAMQAzx97Ou7y8NXSEhp0TtxrwmUlvao8uq4": {
+    "CloseExpiredAuctionsLambdaFunction": {
+      "Type": "AWS::Lambda::Function",
+      "Properties": {
+        "Code": {
+          "S3Bucket": {
+            "Ref": "ServerlessDeploymentBucket"
+          },
+          "S3Key": "serverless/nestjs-aws-serverless/dev/1791978794047-2026-10-14T11:53:14.047Z/nestjs-aws-serverless.zip"
+        },
+        "Handler": "src/auction-expiration.handler",
+        "Runtime": "nodejs24.x",
+        "FunctionName": "nestjs-aws-serverless-dev-closeExpiredAuctions",
+        "MemorySize": 256,
+        "Timeout": 60,
+        "Environment": {
+          "Variables": {
+            "AUCTIONS_TABLE": {
+              "Ref": "AuctionsTable"
+            }
+          }
+        },
+        "Role": {
+          "Fn::GetAtt": [
+            "AuctionsApiRole",
+            "Arn"
+          ]
+        }
+      },
+      "DependsOn": [
+        "CloseExpiredAuctionsLogGroup",
+        "AuctionsApiRole"
+      ]
+    },
+    "ApiLambdaVersionNsvnuxIzz3VkMeScCckjGCBklLGMr0uuFk1TOSlC0": {
       "Type": "AWS::Lambda::Version",
       "DeletionPolicy": "Retain",
       "Properties": {
         "FunctionName": {
           "Ref": "ApiLambdaFunction"
         },
-        "CodeSha256": "eMz5QUuqloHGkQCATFYkXcpfKMTaaNmc/cVZyDEhI6k="
+        "CodeSha256": "eM1BByvu+rMMrdvvLKa7gaf1YL5w2dLTuHafRlD2gw0="
+      }
+    },
+    "CloseExpiredAuctionsLambdaVersion2gbPQJEtt6ReKip3sAq8HAYtsmBqbJeSvwShjLSBA": {
+      "Type": "AWS::Lambda::Version",
+      "DeletionPolicy": "Retain",
+      "Properties": {
+        "FunctionName": {
+          "Ref": "CloseExpiredAuctionsLambdaFunction"
+        },
+        "CodeSha256": "eM1BByvu+rMMrdvvLKa7gaf1YL5w2dLTuHafRlD2gw0="
+      }
+    },
+    "CloseExpiredAuctionsEventsRuleSchedule1": {
+      "Type": "AWS::Events::Rule",
+      "Properties": {
+        "ScheduleExpression": "rate(5 minutes)",
+        "State": "ENABLED",
+        "Targets": [
+          {
+            "Arn": {
+              "Fn::GetAtt": [
+                "CloseExpiredAuctionsLambdaFunction",
+                "Arn"
+              ]
+            },
+            "Id": "closeExpiredAuctionsSchedule"
+          }
+        ]
+      }
+    },
+    "CloseExpiredAuctionsLambdaPermissionEventsRuleSchedule1": {
+      "Type": "AWS::Lambda::Permission",
+      "Properties": {
+        "FunctionName": {
+          "Fn::GetAtt": [
+            "CloseExpiredAuctionsLambdaFunction",
+            "Arn"
+          ]
+        },
+        "Action": "lambda:InvokeFunction",
+        "Principal": "events.amazonaws.com",
+        "SourceArn": {
+          "Fn::GetAtt": [
+            "CloseExpiredAuctionsEventsRuleSchedule1",
+            "Arn"
+          ]
+        }
       }
     },
     "HttpApi": {
@@ -259,6 +345,10 @@
           {
             "AttributeName": "createdAt",
             "AttributeType": "S"
+          },
+          {
+            "AttributeName": "endDate",
+            "AttributeType": "S"
           }
         ],
         "KeySchema": [
@@ -324,6 +414,28 @@
               "NonKeyAttributes": [
                 "title",
                 "status",
+                "currentBid",
+                "highestBidderId"
+              ]
+            }
+          },
+          {
+            "IndexName": "status-endDate-index",
+            "KeySchema": [
+              {
+                "AttributeName": "status",
+                "KeyType": "HASH"
+              },
+              {
+                "AttributeName": "endDate",
+                "KeyType": "RANGE"
+              }
+            ],
+            "Projection": {
+              "ProjectionType": "INCLUDE",
+              "NonKeyAttributes": [
+                "title",
+                "createdAt",
                 "currentBid",
                 "highestBidderId"
               ]
@@ -397,20 +509,36 @@
                   "Action": [
                     "dynamodb:Query"
                   ],
-                  "Resource": {
-                    "Fn::Join": [
-                      "",
-                      [
-                        {
-                          "Fn::GetAtt": [
-                            "AuctionsTable",
-                            "Arn"
-                          ]
-                        },
-                        "/index/auctions-with-bids-index"
+                  "Resource": [
+                    {
+                      "Fn::Join": [
+                        "",
+                        [
+                          {
+                            "Fn::GetAtt": [
+                              "AuctionsTable",
+                              "Arn"
+                            ]
+                          },
+                          "/index/auctions-with-bids-index"
+                        ]
                       ]
-                    ]
-                  }
+                    },
+                    {
+                      "Fn::Join": [
+                        "",
+                        [
+                          {
+                            "Fn::GetAtt": [
+                              "AuctionsTable",
+                              "Arn"
+                            ]
+                          },
+                          "/index/status-endDate-index"
+                        ]
+                      ]
+                    }
+                  ]
                 }
               ]
             }
@@ -431,10 +559,19 @@
     "ApiLambdaFunctionQualifiedArn": {
       "Description": "Current Lambda function version",
       "Value": {
-        "Ref": "ApiLambdaVersionU5JuMDhAMQAzx97Ou7y8NXSEhp0TtxrwmUlvao8uq4"
+        "Ref": "ApiLambdaVersionNsvnuxIzz3VkMeScCckjGCBklLGMr0uuFk1TOSlC0"
       },
       "Export": {
         "Name": "sls-nestjs-aws-serverless-dev-ApiLambdaFunctionQualifiedArn"
+      }
+    },
+    "CloseExpiredAuctionsLambdaFunctionQualifiedArn": {
+      "Description": "Current Lambda function version",
+      "Value": {
+        "Ref": "CloseExpiredAuctionsLambdaVersion2gbPQJEtt6ReKip3sAq8HAYtsmBqbJeSvwShjLSBA"
+      },
+      "Export": {
+        "Name": "sls-nestjs-aws-serverless-dev-CloseExpiredAuctionsLambdaFunctionQualifiedArn"
       }
     },
     "HttpApiId": {

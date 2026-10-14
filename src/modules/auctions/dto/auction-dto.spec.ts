@@ -5,6 +5,7 @@ import { AuctionStatus } from '../auctions.types';
 import { CreateAuctionDto } from './create-auction.dto';
 import { PlaceBidDto } from './place-bid.dto';
 import { UpdateAuctionDto } from './update-auction.dto';
+import { AuctionStatusQueryDto } from './auction-status-query.dto';
 
 describe('auction DTOs', () => {
   it('accepts valid create input and trims the title', async () => {
@@ -47,5 +48,12 @@ describe('auction DTOs', () => {
     const dto = plainToInstance(UpdateAuctionDto, { title: 'Updated camera' });
 
     await expect(validate(dto)).resolves.toHaveLength(0);
+  });
+
+  it('normalizes and validates a lowercase status query', async () => {
+    const dto = plainToInstance(AuctionStatusQueryDto, { status: 'active' });
+
+    await expect(validate(dto)).resolves.toHaveLength(0);
+    expect(dto.status).toBe(AuctionStatus.ACTIVE);
   });
 });

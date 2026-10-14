@@ -5,13 +5,7 @@ import {
   PutItemCommand,
   QueryCommand,
 } from '@aws-sdk/client-dynamodb';
-import {
-  beforeEach,
-  describe,
-  expect,
-  it,
-  jest,
-} from '@jest/globals';
+import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 import {
   BadRequestException,
   ConflictException,
@@ -19,6 +13,7 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AuctionsService } from './auctions.service';
+import { AuctionStatus } from './auctions.types';
 
 describe('AuctionsService', () => {
   const dynamoDb = {
@@ -92,6 +87,33 @@ describe('AuctionsService', () => {
       KeyConditionExpression: '#status = :active',
       ExpressionAttributeValues: { ':active': { S: 'ACTIVE' } },
       ScanIndexForward: true,
+    });
+  });
+
+  it('queries only the requested status', async () => {
+    dynamoDb.send.mockResolvedValueOnce({
+      Items: [
+        {
+          id: { S: 'auction-closed' },
+          title: { S: 'Old radio' },
+          status: { S: 'CLOSED' },
+          endDate: { S: '2026-10-20T10:00:00.000Z' },
+          createdAt: { S: '2026-10-10T12:00:00.000Z' },
+          currentBid: { N: '25' },
+        },
+      ],
+    });
+
+    await expect(service.getAll(AuctionStatus.CLOSED)).resolves.toMatchObject([
+      { id: 'auction-closed', status: AuctionStatus.CLOSED },
+    ]);
+
+    expect(dynamoDb.send).toHaveBeenCalledTimes(1);
+    const command = dynamoDb.send.mock.calls[0][0] as QueryCommand;
+    expect(command.input).toMatchObject({
+      IndexName: 'status-endDate-index',
+      KeyConditionExpression: '#status = :status',
+      ExpressionAttributeValues: { ':status': { S: AuctionStatus.CLOSED } },
     });
   });
 

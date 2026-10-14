@@ -18,6 +18,22 @@ describe('HTTP API (e2e)', () => {
       .expect(({ headers, body }) => {
         expect(body).toEqual({ status: 'ok' });
         expect(headers['x-request-id']).toMatch(/^[A-Za-z0-9-]+$/);
+        expect(headers['content-security-policy']).toContain(
+          "script-src 'self'",
+        );
+        expect(headers['content-security-policy']).not.toContain(
+          'unsafe-inline',
+        );
+      });
+  });
+
+  it('serves Swagger UI with its CSP exception scoped to docs', () => {
+    return request(app.getHttpServer())
+      .get('/docs/')
+      .expect(200)
+      .expect('Content-Type', /html/)
+      .expect(({ headers }) => {
+        expect(headers['content-security-policy']).toBeUndefined();
       });
   });
 
@@ -27,6 +43,11 @@ describe('HTTP API (e2e)', () => {
       .expect(200)
       .expect(({ body }) => {
         expect(body.info.title).toBe('Auctions API');
+        expect(body.paths['/auctions'].get.parameters).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ name: 'status', in: 'query' }),
+          ]),
+        );
       });
   });
 
@@ -38,6 +59,17 @@ describe('HTTP API (e2e)', () => {
       .expect(({ headers, body }) => {
         expect(body.statusCode).toBe(400);
         expect(body.requestId).toBe(headers['x-request-id']);
+      });
+  });
+
+  it('rejects unknown auction status filters', () => {
+    return request(app.getHttpServer())
+      .get('/auctions?status=PAUSED')
+      .expect(400)
+      .expect(({ body }) => {
+        expect(body.message).toEqual(
+          expect.arrayContaining([expect.stringContaining('status')]),
+        );
       });
   });
 

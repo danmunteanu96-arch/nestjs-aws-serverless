@@ -66,12 +66,16 @@ export class AuctionsService {
     return auction;
   }
 
-  async getAll(): Promise<Auction[]> {
+  async getAll(status?: AuctionStatus): Promise<Auction[]> {
     const tableName = this.configService.getOrThrow<string>('AUCTIONS_TABLE');
 
     const auctions: Auction[] = [];
     try {
-      for (const status of [AuctionStatus.ACTIVE, AuctionStatus.CLOSED]) {
+      const statuses = status
+        ? [status]
+        : [AuctionStatus.ACTIVE, AuctionStatus.CLOSED];
+
+      for (const queryStatus of statuses) {
         let exclusiveStartKey: Record<string, AttributeValue> | undefined;
 
         do {
@@ -84,7 +88,7 @@ export class AuctionsService {
                 '#status': 'status',
               },
               ExpressionAttributeValues: {
-                ':status': { S: status },
+                ':status': { S: queryStatus },
               },
               ExclusiveStartKey: exclusiveStartKey,
             }),
@@ -98,9 +102,11 @@ export class AuctionsService {
         } while (exclusiveStartKey);
       }
 
-      auctions.sort((first, second) =>
-        first.createdAt.localeCompare(second.createdAt),
-      );
+      if (status === undefined) {
+        auctions.sort((first, second) =>
+          first.createdAt.localeCompare(second.createdAt),
+        );
+      }
     } catch {
       this.logger.error('Failed to retrieve auctions from DynamoDB');
       throw new InternalServerErrorException('Failed to retrieve auctions');

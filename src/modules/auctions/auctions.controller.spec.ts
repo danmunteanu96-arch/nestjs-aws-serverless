@@ -1,6 +1,7 @@
 import { describe, expect, it, jest } from '@jest/globals';
 import { AuctionsController } from './auctions.controller';
 import { AuctionsService } from './auctions.service';
+import { AuctionStatus } from './auctions.types';
 import { CreateAuctionDto } from './dto/create-auction.dto';
 import { PlaceBidDto } from './dto/place-bid.dto';
 import { UpdateAuctionDto } from './dto/update-auction.dto';
@@ -18,10 +19,10 @@ describe('AuctionsController', () => {
       .fn<(input: CreateAuctionDto) => Promise<typeof auction>>()
       .mockResolvedValue(auction),
     getAll: jest
-      .fn<() => Promise<typeof auction[]>>()
+      .fn<(status?: AuctionStatus) => Promise<(typeof auction)[]>>()
       .mockResolvedValue([auction]),
     getActiveAuctions: jest
-      .fn<() => Promise<typeof auction[]>>()
+      .fn<() => Promise<(typeof auction)[]>>()
       .mockResolvedValue([auction]),
     getById: jest
       .fn<(id: string) => Promise<typeof auction>>()
@@ -42,8 +43,15 @@ describe('AuctionsController', () => {
   });
 
   it('returns all auctions from the service', async () => {
-    await expect(controller.getAll()).resolves.toEqual([auction]);
-    expect(auctionsService.getAll).toHaveBeenCalled();
+    await expect(controller.getAll({})).resolves.toEqual([auction]);
+    expect(auctionsService.getAll).toHaveBeenCalledWith(undefined);
+  });
+
+  it('passes a status filter to the service', async () => {
+    await expect(
+      controller.getAll({ status: AuctionStatus.CLOSED }),
+    ).resolves.toEqual([auction]);
+    expect(auctionsService.getAll).toHaveBeenCalledWith(AuctionStatus.CLOSED);
   });
 
   it('returns an auction by id from the service', async () => {

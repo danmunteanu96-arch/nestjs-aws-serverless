@@ -6,15 +6,18 @@ import {
   ParseUUIDPipe,
   Patch,
   Post,
+  Query,
 } from '@nestjs/common';
 import {
   ApiCreatedResponse,
   ApiOkResponse,
   ApiOperation,
   ApiParam,
+  ApiQuery,
   ApiTags,
 } from '@nestjs/swagger';
 import { AuctionResponseDto } from './dto/auction-response.dto';
+import { AuctionStatusQueryDto } from './dto/auction-status-query.dto';
 import { CreateAuctionDto } from './dto/create-auction.dto';
 import { PlaceBidDto } from './dto/place-bid.dto';
 import { UpdateAuctionDto } from './dto/update-auction.dto';
@@ -26,10 +29,11 @@ export class AuctionsController {
   constructor(private readonly auctionsService: AuctionsService) {}
 
   @Get()
-  @ApiOperation({ summary: 'List auctions' })
+  @ApiOperation({ summary: 'List auctions, optionally filtered by status' })
+  @ApiQuery({ name: 'status', enum: ['ACTIVE', 'CLOSED'], required: false })
   @ApiOkResponse({ type: AuctionResponseDto, isArray: true })
-  getAll(): Promise<AuctionResponseDto[]> {
-    return this.auctionsService.getAll();
+  getAll(@Query() query: AuctionStatusQueryDto): Promise<AuctionResponseDto[]> {
+    return this.auctionsService.getAll(query.status);
   }
 
   @Get('active')

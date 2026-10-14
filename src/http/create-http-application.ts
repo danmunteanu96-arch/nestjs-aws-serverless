@@ -12,6 +12,33 @@ import { AppModule } from '../app.module';
 export async function createHttpApplication(): Promise<INestApplication> {
   const app = await NestFactory.create(AppModule, { bodyParser: false });
   const configService = app.get(ConfigService);
+  const docsEnabled = configService.getOrThrow<boolean>('API_DOCS_ENABLED');
+  const helmetOptions = {
+    xPoweredBy: false,
+    noSniff: true,
+    frameguard: { action: 'deny' as const },
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        scriptSrc: ["'self'"],
+        styleSrc: ["'self'"],
+        imgSrc: ["'self'"],
+        connectSrc: ["'self'"],
+        fontSrc: ["'self'"],
+        objectSrc: ["'none'"],
+        mediaSrc: ["'none'"],
+        frameSrc: ["'none'"],
+        baseUri: ["'self'"],
+        formAction: ["'self'"],
+        upgradeInsecureRequests: [],
+      },
+    },
+  };
+  const apiSecurityHeaders = helmet(helmetOptions);
+  const docsSecurityHeaders = helmet({
+    ...helmetOptions,
+    contentSecurityPolicy: false,
+  });
 
   app.use((request: Request, response: Response, next: NextFunction) => {
     const incomingRequestId = request.get('x-request-id');
@@ -23,10 +50,27 @@ export async function createHttpApplication(): Promise<INestApplication> {
     response.setHeader('x-request-id', requestId);
     next();
   });
-  app.use(json({ limit: '1mb' }));
-  app.use(urlencoded({ extended: false, limit: '1mb' }));
-  app.use(helmet());
-  app.use(compression());
+  app.use((request: Request, response: Response, next: NextFunction) => {
+    const isSwaggerRequest = docsEnabled && request.path.startsWith('/docs');
+    const middleware = isSwaggerRequest
+      ? docsSecurityHeaders
+      : apiSecurityHeaders;
+    middleware(request, response, next);
+  });
+  app.use(json({ limit: '1mb', strict: true, type: 'application/json' }));
+  app.use(
+    urlencoded({
+      extended: false,
+      limit: '1mb',
+      parameterLimit: 1000,
+    }),
+  );
+  app.use(
+    compression({
+      level: 6,
+      threshold: 1024,
+    }),
+  );
   app.enableCors({
     origin: configService
       .getOrThrow<string>('CORS_ORIGINS')
@@ -42,7 +86,7 @@ export async function createHttpApplication(): Promise<INestApplication> {
     }),
   );
 
-  if (configService.getOrThrow<boolean>('API_DOCS_ENABLED')) {
+  if (docsEnabled) {
     const document = SwaggerModule.createDocument(
       app,
       new DocumentBuilder()

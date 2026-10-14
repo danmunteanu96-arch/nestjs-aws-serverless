@@ -24,7 +24,7 @@ src/
 ## HTTP Contract
 
 - `GET /health`: cheap liveness check; does not depend on DynamoDB.
-- `GET /auctions`: active and closed auctions, including `endDate`.
+- `GET /auctions`: active and closed auctions, including `endDate`; optional `?status=ACTIVE` or `?status=CLOSED` filters by status (case-insensitive).
 - `GET /auctions/active`: active auctions ordered by `endDate`.
 - `GET /auctions/:id`, `POST /auctions`, `PATCH /auctions/:id`, `POST /auctions/:id/bids`.
 - `GET /docs` and `/docs-json` are enabled outside production by default. Set `API_DOCS_ENABLED=true` to enable them explicitly in production.
