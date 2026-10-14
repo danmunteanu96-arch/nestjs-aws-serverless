@@ -6,37 +6,39 @@ import {
   QueryCommand,
 } from '@aws-sdk/client-dynamodb';
 import {
+  beforeEach,
+  describe,
+  expect,
+  it,
+  jest,
+} from '@jest/globals';
+import {
   BadRequestException,
   ConflictException,
   NotFoundException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { AuctionsService } from './auctions.service';
 
 describe('AuctionsService', () => {
   const dynamoDb = {
-    send: jest.fn().mockResolvedValue({}),
+    send: jest
+      .fn<(...args: unknown[]) => Promise<unknown>>()
+      .mockResolvedValue({}),
   };
-  const service = new AuctionsService(dynamoDb as unknown as DynamoDBClient);
-  const previousTableName = process.env.AUCTIONS_TABLE;
-
+  const service = new AuctionsService(
+    dynamoDb as unknown as DynamoDBClient,
+    new ConfigService({ AUCTIONS_TABLE: 'test-auctions' }),
+  );
   beforeEach(() => {
-    process.env.AUCTIONS_TABLE = 'test-auctions';
     dynamoDb.send.mockClear();
-  });
-
-  afterAll(() => {
-    if (previousTableName === undefined) {
-      delete process.env.AUCTIONS_TABLE;
-    } else {
-      process.env.AUCTIONS_TABLE = previousTableName;
-    }
   });
 
   it('persists a new auction and returns it', async () => {
     const auction = await service.create({
       title: 'Vintage camera',
       status: 'ACTIVE',
-      endDate: '2026-10-20T12:00:00+02:00',
+      endDate: '2026-10-20T10:00:00.000Z',
     });
 
     expect(dynamoDb.send).toHaveBeenCalledWith(expect.any(PutItemCommand));
@@ -306,20 +308,10 @@ describe('AuctionsService', () => {
     ).rejects.toThrow(NotFoundException);
   });
 
-  it('rejects invalid auction, update, bid, and id inputs', async () => {
-    await expect(
-      service.create({ title: ' ', status: 'ACTIVE' }),
-    ).rejects.toThrow(BadRequestException);
-    await expect(
-      service.create({ title: 'Vintage camera', status: 'ACTIVE' }),
-    ).rejects.toThrow(BadRequestException);
+  it('rejects empty updates without calling DynamoDB', async () => {
     await expect(service.update('auction-1', {})).rejects.toThrow(
       BadRequestException,
     );
-    await expect(service.getById(' ')).rejects.toThrow(BadRequestException);
-    await expect(
-      service.placeBid('auction-1', { bidderId: '', amount: Number.NaN }),
-    ).rejects.toThrow(BadRequestException);
     expect(dynamoDb.send).not.toHaveBeenCalled();
   });
 
@@ -339,7 +331,11 @@ describe('AuctionsService', () => {
     );
 
     await expect(
-      service.create({ title: 'Vintage camera', status: 'ACTIVE' }),
+      service.create({
+        title: 'Vintage camera',
+        status: 'ACTIVE',
+        endDate: '2026-10-20T10:00:00.000Z',
+      }),
     ).rejects.toThrow('Failed to create auction');
   });
 });

@@ -1,16 +1,14 @@
-export type AuctionStatus = 'ACTIVE' | 'CLOSED';
+export const AuctionStatus = {
+  ACTIVE: 'ACTIVE',
+  CLOSED: 'CLOSED',
+} as const;
+
+export type AuctionStatus = (typeof AuctionStatus)[keyof typeof AuctionStatus];
 
 export interface CreateAuctionInput {
   title: string;
   status: AuctionStatus;
   endDate: string;
-}
-
-export type UpdateAuctionInput = Partial<CreateAuctionInput>;
-
-export interface PlaceBidInput {
-  bidderId: string;
-  amount: number;
 }
 
 export interface Auction extends Omit<CreateAuctionInput, 'endDate'> {

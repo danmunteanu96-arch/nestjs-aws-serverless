@@ -8,10 +8,23 @@ provider:
   name: aws
   runtime: nodejs24.x
   region: eu-central-1
+  architecture: arm64
   memorySize: 256
   timeout: 10
+  logRetentionInDays: 14
   stage: ${opt:stage, 'dev'}
+  tags:
+    Project: ${self:service}
+    Environment: ${sls:stage}
+    Owner: ${env:RESOURCE_OWNER, 'course-team'}
+  stackTags:
+    Project: ${self:service}
+    Environment: ${sls:stage}
+    Owner: ${env:RESOURCE_OWNER, 'course-team'}
   environment:
+    NODE_ENV: production
+    CORS_ORIGINS: ${env:CORS_ORIGINS, ''}
+    API_DOCS_ENABLED: ${env:API_DOCS_ENABLED, 'false'}
     AUCTIONS_TABLE:
       Ref: AuctionsTable
 
@@ -31,7 +44,6 @@ custom:
     target: node24
     platform: node
     concurrency: 10
-  
 
 functions:
   api:
@@ -51,9 +63,10 @@ functions:
     handler: src/auction-expiration.handler
     role:
       Fn::GetAtt:
-        - AuctionsApiRole
+        - AuctionsExpirationRole
         - Arn
     timeout: 60
+    reservedConcurrency: 1
     events:
       - schedule:
           rate: rate(5 minutes)
@@ -63,3 +76,4 @@ resources:
   Resources:
     AuctionsTable: ${file(./resources/AuctionTableResource.yml):AuctionsTable}
     AuctionsApiRole: ${file(./iam/AuctionTableIAM.yml):AuctionsApiRole}
+    AuctionsExpirationRole: ${file(./iam/AuctionTableIAM.yml):AuctionsExpirationRole}

@@ -6,6 +6,15 @@ AuctionsTable:
     # Nume dinamic bazat pe serviciu și stage (ex: nestjs-aws-serverless-auctions-dev)
     TableName: ${self:service}-auctions-${sls:stage}
     BillingMode: PAY_PER_REQUEST
+    PointInTimeRecoverySpecification:
+      PointInTimeRecoveryEnabled: ${strToBool(${env:DYNAMODB_PITR_ENABLED, 'false'})}
+    Tags:
+      - Key: Project
+        Value: ${self:service}
+      - Key: Environment
+        Value: ${sls:stage}
+      - Key: Owner
+        Value: ${env:RESOURCE_OWNER, 'course-team'}
     AttributeDefinitions:
       - AttributeName: id
         AttributeType: S

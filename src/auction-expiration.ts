@@ -1,7 +1,7 @@
 import { INestApplicationContext } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
-import { AuctionExpirationModule } from './auction-expiration.module';
-import { AuctionExpirationService } from './auction-expiration.service';
+import { AuctionExpirationModule } from './modules/auctions/expiration/auction-expiration.module';
+import { AuctionExpirationService } from './modules/auctions/expiration/auction-expiration.service';
 
 let applicationContext: Promise<INestApplicationContext> | undefined;
 
@@ -9,7 +9,15 @@ export async function handler(): Promise<void> {
   applicationContext ??= NestFactory.createApplicationContext(
     AuctionExpirationModule,
   );
-  const context = await applicationContext;
+
+  let context: INestApplicationContext;
+  try {
+    context = await applicationContext;
+  } catch (error: unknown) {
+    applicationContext = undefined;
+    throw error;
+  }
+
   const expirationService = context.get(AuctionExpirationService);
   await expirationService.closeExpiredAuctions();
 }

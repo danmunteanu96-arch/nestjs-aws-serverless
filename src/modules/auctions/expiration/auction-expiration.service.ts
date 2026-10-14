@@ -6,18 +6,20 @@ import {
   UpdateItemCommand,
 } from '@aws-sdk/client-dynamodb';
 import { Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { AuctionStatus } from '../auctions.types';
 
 @Injectable()
 export class AuctionExpirationService {
   private readonly logger = new Logger(AuctionExpirationService.name);
 
-  constructor(private readonly dynamoDb: DynamoDBClient) {}
+  constructor(
+    private readonly dynamoDb: DynamoDBClient,
+    private readonly configService: ConfigService,
+  ) {}
 
   async closeExpiredAuctions(now: Date = new Date()): Promise<number> {
-    const tableName = process.env.AUCTIONS_TABLE;
-    if (!tableName) {
-      throw new Error('AUCTIONS_TABLE is not configured');
-    }
+    const tableName = this.configService.getOrThrow<string>('AUCTIONS_TABLE');
 
     const expirationTime = { S: now.toISOString() };
     let exclusiveStartKey: Record<string, AttributeValue> | undefined;
@@ -35,7 +37,7 @@ export class AuctionExpirationService {
               '#endDate': 'endDate',
             },
             ExpressionAttributeValues: {
-              ':active': { S: 'ACTIVE' },
+              ':active': { S: AuctionStatus.ACTIVE },
               ':now': expirationTime,
             },
             ExclusiveStartKey: exclusiveStartKey,
@@ -56,13 +58,7 @@ export class AuctionExpirationService {
         exclusiveStartKey = result.LastEvaluatedKey;
       } while (exclusiveStartKey);
     } catch (error: unknown) {
-      const errorMessage =
-        error instanceof Error ? error.message : String(error);
-      const errorStack = error instanceof Error ? error.stack : undefined;
-      this.logger.error(
-        `Failed to close expired auctions: ${errorMessage}`,
-        errorStack,
-      );
+      this.logger.error('Failed to close expired auctions');
       throw error;
     }
 
@@ -94,8 +90,8 @@ export class AuctionExpirationService {
             '#endDate': 'endDate',
           },
           ExpressionAttributeValues: {
-            ':active': { S: 'ACTIVE' },
-            ':closed': { S: 'CLOSED' },
+            ':active': { S: AuctionStatus.ACTIVE },
+            ':closed': { S: AuctionStatus.CLOSED },
             ':now': expirationTime,
           },
         }),

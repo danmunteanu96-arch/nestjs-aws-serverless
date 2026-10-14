@@ -1,6 +1,9 @@
-import { BadRequestException } from '@nestjs/common';
+import { describe, expect, it, jest } from '@jest/globals';
 import { AuctionsController } from './auctions.controller';
 import { AuctionsService } from './auctions.service';
+import { CreateAuctionDto } from './dto/create-auction.dto';
+import { PlaceBidDto } from './dto/place-bid.dto';
+import { UpdateAuctionDto } from './dto/update-auction.dto';
 
 describe('AuctionsController', () => {
   const auction = {
@@ -11,12 +14,24 @@ describe('AuctionsController', () => {
     createdAt: '2026-10-10T12:00:00.000Z',
   };
   const auctionsService = {
-    create: jest.fn().mockResolvedValue(auction),
-    getAll: jest.fn().mockResolvedValue([auction]),
-    getActiveAuctions: jest.fn().mockResolvedValue([auction]),
-    getById: jest.fn().mockResolvedValue(auction),
-    update: jest.fn().mockResolvedValue(auction),
-    placeBid: jest.fn().mockResolvedValue(auction),
+    create: jest
+      .fn<(input: CreateAuctionDto) => Promise<typeof auction>>()
+      .mockResolvedValue(auction),
+    getAll: jest
+      .fn<() => Promise<typeof auction[]>>()
+      .mockResolvedValue([auction]),
+    getActiveAuctions: jest
+      .fn<() => Promise<typeof auction[]>>()
+      .mockResolvedValue([auction]),
+    getById: jest
+      .fn<(id: string) => Promise<typeof auction>>()
+      .mockResolvedValue(auction),
+    update: jest
+      .fn<(id: string, input: UpdateAuctionDto) => Promise<typeof auction>>()
+      .mockResolvedValue(auction),
+    placeBid: jest
+      .fn<(id: string, input: PlaceBidDto) => Promise<typeof auction>>()
+      .mockResolvedValue(auction),
   };
   const controller = new AuctionsController(
     auctionsService as unknown as AuctionsService,
@@ -60,13 +75,6 @@ describe('AuctionsController', () => {
     });
   });
 
-  it('rejects an empty patch body', async () => {
-    await expect(controller.update('auction-1', {})).rejects.toThrow(
-      BadRequestException,
-    );
-    expect(auctionsService.update).not.toHaveBeenCalled();
-  });
-
   it('delegates valid auction data to the service', async () => {
     await expect(
       controller.create({
@@ -78,14 +86,7 @@ describe('AuctionsController', () => {
     expect(auctionsService.create).toHaveBeenCalledWith({
       title: 'Vintage camera',
       status: 'ACTIVE',
-      endDate: '2026-10-20T10:00:00.000Z',
+      endDate: '2026-10-20T12:00:00+02:00',
     });
-  });
-
-  it('requires title and status', async () => {
-    await expect(
-      controller.create({ title: '', status: 'ACTIVE' }),
-    ).rejects.toThrow(BadRequestException);
-    expect(auctionsService.create).not.toHaveBeenCalled();
   });
 });

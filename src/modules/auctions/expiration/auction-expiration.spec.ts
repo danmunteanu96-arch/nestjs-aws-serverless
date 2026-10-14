@@ -3,43 +3,32 @@ import {
   QueryCommand,
   UpdateItemCommand,
 } from '@aws-sdk/client-dynamodb';
+import { describe, expect, it, jest } from '@jest/globals';
+import { ConfigService } from '@nestjs/config';
+import { AuctionStatus } from '../auctions.types';
 import { AuctionExpirationService } from './auction-expiration.service';
 
 describe('closeExpiredAuctions', () => {
-  const previousTableName = process.env.AUCTIONS_TABLE;
-
-  beforeEach(() => {
-    process.env.AUCTIONS_TABLE = 'test-auctions';
-  });
-
-  afterAll(() => {
-    if (previousTableName === undefined) {
-      delete process.env.AUCTIONS_TABLE;
-    } else {
-      process.env.AUCTIONS_TABLE = previousTableName;
-    }
-  });
-
   it('queries expired active auctions and conditionally closes them', async () => {
-    const send = jest
-      .fn()
+    const send = jest.fn<(...args: unknown[]) => Promise<unknown>>()
       .mockResolvedValueOnce({
         Items: [
           {
             id: { S: 'auction-1' },
-            status: { S: 'ACTIVE' },
+            status: { S: AuctionStatus.ACTIVE },
             endDate: { S: '2026-10-14T11:59:00.000Z' },
           },
         ],
       })
       .mockResolvedValueOnce({});
     const client = { send } as unknown as DynamoDBClient;
-    const service = new AuctionExpirationService(client);
+    const service = new AuctionExpirationService(
+      client,
+      new ConfigService({ AUCTIONS_TABLE: 'test-auctions' }),
+    );
     const now = new Date('2026-10-14T12:00:00.000Z');
 
-    await expect(
-      service.closeExpiredAuctions(now),
-    ).resolves.toBe(1);
+    await expect(service.closeExpiredAuctions(now)).resolves.toBe(1);
 
     const query = send.mock.calls[0][0] as QueryCommand;
     expect(query.input).toMatchObject({

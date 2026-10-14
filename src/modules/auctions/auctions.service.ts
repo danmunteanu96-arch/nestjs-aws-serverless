@@ -1,10 +1,12 @@
 import {
+  BadRequestException,
   ConflictException,
   InternalServerErrorException,
   Injectable,
   Logger,
   NotFoundException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import {
   AttributeValue,
   ConditionalCheckFailedException,
@@ -15,31 +17,23 @@ import {
   UpdateItemCommand,
 } from '@aws-sdk/client-dynamodb';
 import * as crypto from 'crypto';
+import { AuctionStatus } from './auctions.types';
 import type { Auction } from './auctions.types';
-import { parseAuctionId, parseCreateAuctionInput, parsePlaceBidInput, parseUpdateAuctionInput } from './auctions.validation';
-
-
-export type {
-  Auction,
-  CreateAuctionInput,
-  PlaceBidInput,
-} from './auctions.types';
+import { CreateAuctionDto } from './dto/create-auction.dto';
+import { PlaceBidDto } from './dto/place-bid.dto';
+import { UpdateAuctionDto } from './dto/update-auction.dto';
 
 @Injectable()
 export class AuctionsService {
   private readonly logger = new Logger(AuctionsService.name);
 
-  constructor(private readonly dynamoDb: DynamoDBClient) {}
+  constructor(
+    private readonly dynamoDb: DynamoDBClient,
+    private readonly configService: ConfigService,
+  ) {}
 
-  async create(input: unknown): Promise<Auction> {
-    const tableName = process.env.AUCTIONS_TABLE;
-    if (!tableName) {
-      throw new InternalServerErrorException(
-        'AUCTIONS_TABLE is not configured',
-      );
-    }
-
-    const validInput = parseCreateAuctionInput(input);
+  async create(validInput: CreateAuctionDto): Promise<Auction> {
+    const tableName = this.configService.getOrThrow<string>('AUCTIONS_TABLE');
     const auction: Auction = {
       id: crypto.randomUUID(),
       title: validInput.title,
@@ -64,14 +58,8 @@ export class AuctionsService {
           },
         }),
       );
-    } catch (error: unknown) {
-      const errorMessage =
-        error instanceof Error ? error.message : String(error);
-      const errorStack = error instanceof Error ? error.stack : undefined;
-      this.logger.error(
-        `Failed to save auction to DynamoDB: ${errorMessage}`,
-        errorStack,
-      );
+    } catch {
+      this.logger.error('Failed to create auction in DynamoDB');
       throw new InternalServerErrorException('Failed to create auction');
     }
 
@@ -79,16 +67,11 @@ export class AuctionsService {
   }
 
   async getAll(): Promise<Auction[]> {
-    const tableName = process.env.AUCTIONS_TABLE;
-    if (!tableName) {
-      throw new InternalServerErrorException(
-        'AUCTIONS_TABLE is not configured',
-      );
-    }
+    const tableName = this.configService.getOrThrow<string>('AUCTIONS_TABLE');
 
     const auctions: Auction[] = [];
     try {
-      for (const status of ['ACTIVE', 'CLOSED'] as const) {
+      for (const status of [AuctionStatus.ACTIVE, AuctionStatus.CLOSED]) {
         let exclusiveStartKey: Record<string, AttributeValue> | undefined;
 
         do {
@@ -118,14 +101,8 @@ export class AuctionsService {
       auctions.sort((first, second) =>
         first.createdAt.localeCompare(second.createdAt),
       );
-    } catch (error: unknown) {
-      const errorMessage =
-        error instanceof Error ? error.message : String(error);
-      const errorStack = error instanceof Error ? error.stack : undefined;
-      this.logger.error(
-        `Failed to retrieve auctions from DynamoDB: ${errorMessage}`,
-        errorStack,
-      );
+    } catch {
+      this.logger.error('Failed to retrieve auctions from DynamoDB');
       throw new InternalServerErrorException('Failed to retrieve auctions');
     }
 
@@ -133,12 +110,7 @@ export class AuctionsService {
   }
 
   async getActiveAuctions(): Promise<Auction[]> {
-    const tableName = process.env.AUCTIONS_TABLE;
-    if (!tableName) {
-      throw new InternalServerErrorException(
-        'AUCTIONS_TABLE is not configured',
-      );
-    }
+    const tableName = this.configService.getOrThrow<string>('AUCTIONS_TABLE');
 
     const auctions: Auction[] = [];
     let exclusiveStartKey: Record<string, AttributeValue> | undefined;
@@ -154,7 +126,7 @@ export class AuctionsService {
               '#status': 'status',
             },
             ExpressionAttributeValues: {
-              ':active': { S: 'ACTIVE' },
+              ':active': { S: AuctionStatus.ACTIVE },
             },
             ScanIndexForward: true,
             ExclusiveStartKey: exclusiveStartKey,
@@ -167,14 +139,8 @@ export class AuctionsService {
 
         exclusiveStartKey = result.LastEvaluatedKey;
       } while (exclusiveStartKey);
-    } catch (error: unknown) {
-      const errorMessage =
-        error instanceof Error ? error.message : String(error);
-      const errorStack = error instanceof Error ? error.stack : undefined;
-      this.logger.error(
-        `Failed to retrieve active auctions from DynamoDB: ${errorMessage}`,
-        errorStack,
-      );
+    } catch {
+      this.logger.error('Failed to retrieve active auctions from DynamoDB');
       throw new InternalServerErrorException(
         'Failed to retrieve active auctions',
       );
@@ -183,15 +149,8 @@ export class AuctionsService {
     return auctions;
   }
 
-  async getById(id: unknown): Promise<Auction> {
-    const tableName = process.env.AUCTIONS_TABLE;
-    if (!tableName) {
-      throw new InternalServerErrorException(
-        'AUCTIONS_TABLE is not configured',
-      );
-    }
-
-    const auctionId = parseAuctionId(id);
+  async getById(auctionId: string): Promise<Auction> {
+    const tableName = this.configService.getOrThrow<string>('AUCTIONS_TABLE');
     let item;
     try {
       const result = await this.dynamoDb.send(
@@ -203,14 +162,8 @@ export class AuctionsService {
         }),
       );
       item = result.Item;
-    } catch (error: unknown) {
-      const errorMessage =
-        error instanceof Error ? error.message : String(error);
-      const errorStack = error instanceof Error ? error.stack : undefined;
-      this.logger.error(
-        `Failed to retrieve auction from DynamoDB: ${errorMessage}`,
-        errorStack,
-      );
+    } catch {
+      this.logger.error('Failed to retrieve auction from DynamoDB');
       throw new InternalServerErrorException('Failed to retrieve auction');
     }
 
@@ -221,16 +174,17 @@ export class AuctionsService {
     return this.toAuction(item);
   }
 
-  async update(id: unknown, input: unknown): Promise<Auction> {
-    const tableName = process.env.AUCTIONS_TABLE;
-    if (!tableName) {
-      throw new InternalServerErrorException(
-        'AUCTIONS_TABLE is not configured',
+  async update(
+    auctionId: string,
+    validInput: UpdateAuctionDto,
+  ): Promise<Auction> {
+    const tableName = this.configService.getOrThrow<string>('AUCTIONS_TABLE');
+
+    if (Object.keys(validInput).length === 0) {
+      throw new BadRequestException(
+        'Provide title, status, or endDate to update',
       );
     }
-
-    const auctionId = parseAuctionId(id);
-    const validInput = parseUpdateAuctionInput(input);
 
     const updates: string[] = [];
     const expressionAttributeNames: Record<string, string> = { '#id': 'id' };
@@ -281,13 +235,7 @@ export class AuctionsService {
         );
       }
 
-      const errorMessage =
-        error instanceof Error ? error.message : String(error);
-      const errorStack = error instanceof Error ? error.stack : undefined;
-      this.logger.error(
-        `Failed to update auction in DynamoDB: ${errorMessage}`,
-        errorStack,
-      );
+      this.logger.error('Failed to update auction in DynamoDB');
       throw new InternalServerErrorException('Failed to update auction');
     }
 
@@ -301,16 +249,8 @@ export class AuctionsService {
     return this.toAuction(attributes);
   }
 
-  async placeBid(id: unknown, input: unknown): Promise<Auction> {
-    const tableName = process.env.AUCTIONS_TABLE;
-    if (!tableName) {
-      throw new InternalServerErrorException(
-        'AUCTIONS_TABLE is not configured',
-      );
-    }
-
-    const auctionId = parseAuctionId(id);
-    const bid = parsePlaceBidInput(input);
+  async placeBid(auctionId: string, bid: PlaceBidDto): Promise<Auction> {
+    const tableName = this.configService.getOrThrow<string>('AUCTIONS_TABLE');
 
     try {
       const result = await this.dynamoDb.send(
@@ -347,7 +287,7 @@ export class AuctionsService {
           error.name === 'ConditionalCheckFailedException')
       ) {
         const currentAuction = await this.getById(auctionId);
-        if (currentAuction.status !== 'ACTIVE') {
+        if (currentAuction.status !== AuctionStatus.ACTIVE) {
           throw new ConflictException(
             'Bids can only be placed on active auctions',
           );
@@ -357,13 +297,7 @@ export class AuctionsService {
         );
       }
 
-      const errorMessage =
-        error instanceof Error ? error.message : String(error);
-      const errorStack = error instanceof Error ? error.stack : undefined;
-      this.logger.error(
-        `Failed to place bid in DynamoDB: ${errorMessage}`,
-        errorStack,
-      );
+      this.logger.error('Failed to place bid in DynamoDB');
       throw new InternalServerErrorException('Failed to place bid');
     }
   }
@@ -376,12 +310,14 @@ export class AuctionsService {
     const currentBid =
       item.currentBid?.N === undefined ? 0 : Number(item.currentBid.N);
     const highestBidderId = item.highestBidderId?.S;
-  const endDate = item.endDate?.S;
+    const endDate = item.endDate?.S;
+    const isValidStatus =
+      status === AuctionStatus.ACTIVE || status === AuctionStatus.CLOSED;
 
     if (
       !id ||
       !title ||
-      !status ||
+      !isValidStatus ||
       !createdAt ||
       !Number.isFinite(currentBid) ||
       currentBid < 0
@@ -395,7 +331,7 @@ export class AuctionsService {
     return {
       id,
       title,
-      status: status as Auction['status'],
+      status,
       createdAt,
       ...(endDate ? { endDate } : {}),
       currentBid,

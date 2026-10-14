@@ -45,10 +45,52 @@ AuctionsApiRole:
                     - - Fn::GetAtt:
                           - AuctionsTable
                           - Arn
-                      - '/index/auctions-with-bids-index'
-                - Fn::Join:
-                    - ''
-                    - - Fn::GetAtt:
-                          - AuctionsTable
-                          - Arn
                       - '/index/status-endDate-index'
+    Tags:
+      - Key: Project
+        Value: nestjs-aws-serverless
+      - Key: Environment
+        Value: ${sls:stage}
+      - Key: Owner
+        Value: ${env:RESOURCE_OWNER, 'course-team'}
+AuctionsExpirationRole:
+  Type: AWS::IAM::Role
+  Properties:
+    AssumeRolePolicyDocument:
+      Version: '2012-10-17'
+      Statement:
+        - Effect: Allow
+          Principal:
+            Service: lambda.amazonaws.com
+          Action: sts:AssumeRole
+    ManagedPolicyArns:
+      - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+    Policies:
+      - PolicyName: close-expired-auctions
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:UpdateItem
+              Resource:
+                Fn::GetAtt:
+                  - AuctionsTable
+                  - Arn
+            - Effect: Allow
+              Action:
+                - dynamodb:Query
+              Resource:
+                Fn::Join:
+                  - ''
+                  - - Fn::GetAtt:
+                        - AuctionsTable
+                        - Arn
+                    - '/index/status-endDate-index'
+    Tags:
+      - Key: Project
+        Value: nestjs-aws-serverless
+      - Key: Environment
+        Value: ${sls:stage}
+      - Key: Owner
+        Value: ${env:RESOURCE_OWNER, 'course-team'}

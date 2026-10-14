@@ -1,24 +1,49 @@
-import { NestFactory } from '@nestjs/core';
 import serverlessExpress from '@codegenie/serverless-express';
-import { Context } from 'aws-lambda';
-import { AppModule } from './app.module';
+import type {
+  APIGatewayProxyEventV2,
+  APIGatewayProxyResultV2,
+  Context,
+  Handler,
+} from 'aws-lambda';
+import { createHttpApplication } from './http/create-http-application';
 
-type PromiseHandler = (event: any, context: Context) => Promise<unknown>;
+type ApiHandler = Handler<APIGatewayProxyEventV2, APIGatewayProxyResultV2>;
+type PromiseApiHandler = (
+  event: APIGatewayProxyEventV2,
+  context: Context,
+) => Promise<APIGatewayProxyResultV2>;
 
-let server: PromiseHandler;
+let server: Promise<ApiHandler> | undefined;
 
-async function bootstrap(): Promise<PromiseHandler> {
-  const app = await NestFactory.create(AppModule);
-
+async function bootstrap(): Promise<ApiHandler> {
+  const app = await createHttpApplication();
   await app.init();
-
   const expressApp = app.getHttpAdapter().getInstance();
-
-  return serverlessExpress({ app: expressApp }) as unknown as PromiseHandler;
+  return serverlessExpress({ app: expressApp }) as ApiHandler;
 }
 
-export const handler: PromiseHandler = async (event: any, context: Context) => {
-  server = server ?? (await bootstrap());
+export const handler: PromiseApiHandler = async (
+  event: APIGatewayProxyEventV2,
+  context: Context,
+) => {
+  server ??= bootstrap();
+  let serverHandler: ApiHandler;
+  try {
+    serverHandler = await server;
+  } catch (error: unknown) {
+    server = undefined;
+    throw error;
+  }
 
-  return server(event, context);
+  return new Promise<APIGatewayProxyResultV2>((resolve, reject) => {
+    serverHandler(event, context, (error, result) => {
+      if (error) {
+        reject(error);
+      } else if (result === undefined) {
+        reject(new Error('Lambda HTTP adapter returned no response'));
+      } else {
+        resolve(result);
+      }
+    });
+  });
 };
