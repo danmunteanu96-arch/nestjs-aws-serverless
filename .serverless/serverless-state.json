@@ -8,10 +8,25 @@
       "name": "aws",
       "runtime": "nodejs24.x",
       "region": "eu-central-1",
+      "architecture": "arm64",
       "memorySize": 256,
       "timeout": 10,
+      "logRetentionInDays": 14,
       "stage": "dev",
+      "tags": {
+        "Project": "nestjs-aws-serverless",
+        "Environment": "dev",
+        "Owner": "course-team"
+      },
+      "stackTags": {
+        "Project": "nestjs-aws-serverless",
+        "Environment": "dev",
+        "Owner": "course-team"
+      },
       "environment": {
+        "NODE_ENV": "production",
+        "CORS_ORIGINS": "http://localhost:3000",
+        "API_DOCS_ENABLED": "true",
         "AUCTIONS_TABLE": {
           "Ref": "AuctionsTable"
         }
@@ -93,13 +108,15 @@
           "ApiLogGroup": {
             "Type": "AWS::Logs::LogGroup",
             "Properties": {
-              "LogGroupName": "/aws/lambda/nestjs-aws-serverless-dev-api"
+              "LogGroupName": "/aws/lambda/nestjs-aws-serverless-dev-api",
+              "RetentionInDays": 14
             }
           },
           "CloseExpiredAuctionsLogGroup": {
             "Type": "AWS::Logs::LogGroup",
             "Properties": {
-              "LogGroupName": "/aws/lambda/nestjs-aws-serverless-dev-closeExpiredAuctions"
+              "LogGroupName": "/aws/lambda/nestjs-aws-serverless-dev-closeExpiredAuctions",
+              "RetentionInDays": 14
             }
           },
           "ApiLambdaFunction": {
@@ -109,15 +126,35 @@
                 "S3Bucket": {
                   "Ref": "ServerlessDeploymentBucket"
                 },
-                "S3Key": "serverless/nestjs-aws-serverless/dev/1791978794047-2026-10-14T11:53:14.047Z/nestjs-aws-serverless.zip"
+                "S3Key": "serverless/nestjs-aws-serverless/dev/1792130720375-2026-10-16T06:05:20.375Z/nestjs-aws-serverless.zip"
               },
               "Handler": "src/lambda.handler",
               "Runtime": "nodejs24.x",
               "FunctionName": "nestjs-aws-serverless-dev-api",
               "MemorySize": 256,
               "Timeout": 10,
+              "Architectures": [
+                "arm64"
+              ],
+              "Tags": [
+                {
+                  "Key": "Project",
+                  "Value": "nestjs-aws-serverless"
+                },
+                {
+                  "Key": "Environment",
+                  "Value": "dev"
+                },
+                {
+                  "Key": "Owner",
+                  "Value": "course-team"
+                }
+              ],
               "Environment": {
                 "Variables": {
+                  "NODE_ENV": "production",
+                  "CORS_ORIGINS": "http://localhost:3000",
+                  "API_DOCS_ENABLED": "true",
                   "AUCTIONS_TABLE": {
                     "$ref": "$[\"service\"][\"provider\"][\"environment\"][\"AUCTIONS_TABLE\"]"
                   }
@@ -142,15 +179,35 @@
                 "S3Bucket": {
                   "Ref": "ServerlessDeploymentBucket"
                 },
-                "S3Key": "serverless/nestjs-aws-serverless/dev/1791978794047-2026-10-14T11:53:14.047Z/nestjs-aws-serverless.zip"
+                "S3Key": "serverless/nestjs-aws-serverless/dev/1792130720375-2026-10-16T06:05:20.375Z/nestjs-aws-serverless.zip"
               },
               "Handler": "src/auction-expiration.handler",
               "Runtime": "nodejs24.x",
               "FunctionName": "nestjs-aws-serverless-dev-closeExpiredAuctions",
               "MemorySize": 256,
               "Timeout": 60,
+              "Architectures": [
+                "arm64"
+              ],
+              "Tags": [
+                {
+                  "Key": "Project",
+                  "Value": "nestjs-aws-serverless"
+                },
+                {
+                  "Key": "Environment",
+                  "Value": "dev"
+                },
+                {
+                  "Key": "Owner",
+                  "Value": "course-team"
+                }
+              ],
               "Environment": {
                 "Variables": {
+                  "NODE_ENV": "production",
+                  "CORS_ORIGINS": "http://localhost:3000",
+                  "API_DOCS_ENABLED": "true",
                   "AUCTIONS_TABLE": {
                     "$ref": "$[\"service\"][\"provider\"][\"environment\"][\"AUCTIONS_TABLE\"]"
                   }
@@ -158,34 +215,34 @@
               },
               "Role": {
                 "Fn::GetAtt": [
-                  "AuctionsApiRole",
+                  "AuctionsExpirationRole",
                   "Arn"
                 ]
               }
             },
             "DependsOn": [
               "CloseExpiredAuctionsLogGroup",
-              "AuctionsApiRole"
+              "AuctionsExpirationRole"
             ]
           },
-          "ApiLambdaVersionNsvnuxIzz3VkMeScCckjGCBklLGMr0uuFk1TOSlC0": {
+          "ApiLambdaVersionofKDRuBKJ5App3srs2ctXWxuyQXjcGxC2Qna6GF4k": {
             "Type": "AWS::Lambda::Version",
             "DeletionPolicy": "Retain",
             "Properties": {
               "FunctionName": {
                 "Ref": "ApiLambdaFunction"
               },
-              "CodeSha256": "eM1BByvu+rMMrdvvLKa7gaf1YL5w2dLTuHafRlD2gw0="
+              "CodeSha256": "CVISvfcxDY/D0alVXBHQOqwnrg+b0e+srTwpSKme/2k="
             }
           },
-          "CloseExpiredAuctionsLambdaVersion2gbPQJEtt6ReKip3sAq8HAYtsmBqbJeSvwShjLSBA": {
+          "CloseExpiredAuctionsLambdaVersionS4feBDHeQXXqjVqYwHviccDMmeQTi6BCcGYzVlXUeS0": {
             "Type": "AWS::Lambda::Version",
             "DeletionPolicy": "Retain",
             "Properties": {
               "FunctionName": {
                 "Ref": "CloseExpiredAuctionsLambdaFunction"
               },
-              "CodeSha256": "eM1BByvu+rMMrdvvLKa7gaf1YL5w2dLTuHafRlD2gw0="
+              "CodeSha256": "CVISvfcxDY/D0alVXBHQOqwnrg+b0e+srTwpSKme/2k="
             }
           },
           "CloseExpiredAuctionsEventsRuleSchedule1": {
@@ -229,7 +286,12 @@
             "Type": "AWS::ApiGatewayV2::Api",
             "Properties": {
               "Name": "dev-nestjs-aws-serverless",
-              "ProtocolType": "HTTP"
+              "ProtocolType": "HTTP",
+              "Tags": {
+                "Project": "nestjs-aws-serverless",
+                "Environment": "dev",
+                "Owner": "course-team"
+              }
             }
           },
           "HttpApiStage": {
@@ -242,6 +304,11 @@
               "AutoDeploy": true,
               "DefaultRouteSettings": {
                 "DetailedMetricsEnabled": false
+              },
+              "Tags": {
+                "Project": "nestjs-aws-serverless",
+                "Environment": "dev",
+                "Owner": "course-team"
               }
             }
           },
@@ -345,6 +412,23 @@
             "Properties": {
               "TableName": "nestjs-aws-serverless-auctions-dev",
               "BillingMode": "PAY_PER_REQUEST",
+              "PointInTimeRecoverySpecification": {
+                "PointInTimeRecoveryEnabled": false
+              },
+              "Tags": [
+                {
+                  "Key": "Project",
+                  "Value": "nestjs-aws-serverless"
+                },
+                {
+                  "Key": "Environment",
+                  "Value": "dev"
+                },
+                {
+                  "Key": "Owner",
+                  "Value": "course-team"
+                }
+              ],
               "AttributeDefinitions": [
                 {
                   "AttributeName": "id",
@@ -536,20 +620,6 @@
                                     "Arn"
                                   ]
                                 },
-                                "/index/auctions-with-bids-index"
-                              ]
-                            ]
-                          },
-                          {
-                            "Fn::Join": [
-                              "",
-                              [
-                                {
-                                  "Fn::GetAtt": [
-                                    "AuctionsTable",
-                                    "Arn"
-                                  ]
-                                },
                                 "/index/status-endDate-index"
                               ]
                             ]
@@ -558,6 +628,96 @@
                       }
                     ]
                   }
+                }
+              ],
+              "Tags": [
+                {
+                  "Key": "Project",
+                  "Value": "nestjs-aws-serverless"
+                },
+                {
+                  "Key": "Environment",
+                  "Value": "dev"
+                },
+                {
+                  "Key": "Owner",
+                  "Value": "course-team"
+                }
+              ]
+            }
+          },
+          "AuctionsExpirationRole": {
+            "Type": "AWS::IAM::Role",
+            "Properties": {
+              "AssumeRolePolicyDocument": {
+                "Version": "2012-10-17",
+                "Statement": [
+                  {
+                    "Effect": "Allow",
+                    "Principal": {
+                      "Service": "lambda.amazonaws.com"
+                    },
+                    "Action": "sts:AssumeRole"
+                  }
+                ]
+              },
+              "ManagedPolicyArns": [
+                "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+              ],
+              "Policies": [
+                {
+                  "PolicyName": "close-expired-auctions",
+                  "PolicyDocument": {
+                    "Version": "2012-10-17",
+                    "Statement": [
+                      {
+                        "Effect": "Allow",
+                        "Action": [
+                          "dynamodb:UpdateItem"
+                        ],
+                        "Resource": {
+                          "Fn::GetAtt": [
+                            "AuctionsTable",
+                            "Arn"
+                          ]
+                        }
+                      },
+                      {
+                        "Effect": "Allow",
+                        "Action": [
+                          "dynamodb:Query"
+                        ],
+                        "Resource": {
+                          "Fn::Join": [
+                            "",
+                            [
+                              {
+                                "Fn::GetAtt": [
+                                  "AuctionsTable",
+                                  "Arn"
+                                ]
+                              },
+                              "/index/status-endDate-index"
+                            ]
+                          ]
+                        }
+                      }
+                    ]
+                  }
+                }
+              ],
+              "Tags": [
+                {
+                  "Key": "Project",
+                  "Value": "nestjs-aws-serverless"
+                },
+                {
+                  "Key": "Environment",
+                  "Value": "dev"
+                },
+                {
+                  "Key": "Owner",
+                  "Value": "course-team"
                 }
               ]
             }
@@ -575,7 +735,7 @@
           "ApiLambdaFunctionQualifiedArn": {
             "Description": "Current Lambda function version",
             "Value": {
-              "Ref": "ApiLambdaVersionNsvnuxIzz3VkMeScCckjGCBklLGMr0uuFk1TOSlC0"
+              "Ref": "ApiLambdaVersionofKDRuBKJ5App3srs2ctXWxuyQXjcGxC2Qna6GF4k"
             },
             "Export": {
               "Name": "sls-nestjs-aws-serverless-dev-ApiLambdaFunctionQualifiedArn"
@@ -584,7 +744,7 @@
           "CloseExpiredAuctionsLambdaFunctionQualifiedArn": {
             "Description": "Current Lambda function version",
             "Value": {
-              "Ref": "CloseExpiredAuctionsLambdaVersion2gbPQJEtt6ReKip3sAq8HAYtsmBqbJeSvwShjLSBA"
+              "Ref": "CloseExpiredAuctionsLambdaVersionS4feBDHeQXXqjVqYwHviccDMmeQTi6BCcGYzVlXUeS0"
             },
             "Export": {
               "Name": "sls-nestjs-aws-serverless-dev-CloseExpiredAuctionsLambdaFunctionQualifiedArn"
@@ -717,12 +877,13 @@
         "keepNames": true,
         "sourcemap": false,
         "plugins": "plugins.js",
+        "external": [
+          "@fastify/static"
+        ],
         "exclude": [
           "@nestjs/microservices",
           "@nestjs/websockets",
-          "cache-manager",
-          "class-transformer",
-          "class-validator"
+          "cache-manager"
         ],
         "target": "node24",
         "platform": "node",
@@ -764,7 +925,7 @@
         "timeout": 10,
         "runtime": "nodejs24.x",
         "vpc": {},
-        "versionLogicalId": "ApiLambdaVersionNsvnuxIzz3VkMeScCckjGCBklLGMr0uuFk1TOSlC0"
+        "versionLogicalId": "ApiLambdaVersionofKDRuBKJ5App3srs2ctXWxuyQXjcGxC2Qna6GF4k"
       },
       "closeExpiredAuctions": {
         "handler": "src/auction-expiration.handler",
@@ -787,7 +948,7 @@
         "memory": 256,
         "runtime": "nodejs24.x",
         "vpc": {},
-        "versionLogicalId": "CloseExpiredAuctionsLambdaVersion2gbPQJEtt6ReKip3sAq8HAYtsmBqbJeSvwShjLSBA"
+        "versionLogicalId": "CloseExpiredAuctionsLambdaVersionS4feBDHeQXXqjVqYwHviccDMmeQTi6BCcGYzVlXUeS0"
       }
     },
     "resources": {
@@ -799,6 +960,23 @@
           "Properties": {
             "TableName": "nestjs-aws-serverless-auctions-dev",
             "BillingMode": "PAY_PER_REQUEST",
+            "PointInTimeRecoverySpecification": {
+              "PointInTimeRecoveryEnabled": false
+            },
+            "Tags": [
+              {
+                "Key": "Project",
+                "Value": "nestjs-aws-serverless"
+              },
+              {
+                "Key": "Environment",
+                "Value": "dev"
+              },
+              {
+                "Key": "Owner",
+                "Value": "course-team"
+              }
+            ],
             "AttributeDefinitions": [
               {
                 "AttributeName": "id",
@@ -990,20 +1168,6 @@
                                   "Arn"
                                 ]
                               },
-                              "/index/auctions-with-bids-index"
-                            ]
-                          ]
-                        },
-                        {
-                          "Fn::Join": [
-                            "",
-                            [
-                              {
-                                "Fn::GetAtt": [
-                                  "AuctionsTable",
-                                  "Arn"
-                                ]
-                              },
                               "/index/status-endDate-index"
                             ]
                           ]
@@ -1013,6 +1177,96 @@
                   ]
                 }
               }
+            ],
+            "Tags": [
+              {
+                "Key": "Project",
+                "Value": "nestjs-aws-serverless"
+              },
+              {
+                "Key": "Environment",
+                "Value": "dev"
+              },
+              {
+                "Key": "Owner",
+                "Value": "course-team"
+              }
+            ]
+          }
+        },
+        "AuctionsExpirationRole": {
+          "Type": "AWS::IAM::Role",
+          "Properties": {
+            "AssumeRolePolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Principal": {
+                    "Service": "lambda.amazonaws.com"
+                  },
+                  "Action": "sts:AssumeRole"
+                }
+              ]
+            },
+            "ManagedPolicyArns": [
+              "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+            ],
+            "Policies": [
+              {
+                "PolicyName": "close-expired-auctions",
+                "PolicyDocument": {
+                  "Version": "2012-10-17",
+                  "Statement": [
+                    {
+                      "Effect": "Allow",
+                      "Action": [
+                        "dynamodb:UpdateItem"
+                      ],
+                      "Resource": {
+                        "Fn::GetAtt": [
+                          "AuctionsTable",
+                          "Arn"
+                        ]
+                      }
+                    },
+                    {
+                      "Effect": "Allow",
+                      "Action": [
+                        "dynamodb:Query"
+                      ],
+                      "Resource": {
+                        "Fn::Join": [
+                          "",
+                          [
+                            {
+                              "Fn::GetAtt": [
+                                "AuctionsTable",
+                                "Arn"
+                              ]
+                            },
+                            "/index/status-endDate-index"
+                          ]
+                        ]
+                      }
+                    }
+                  ]
+                }
+              }
+            ],
+            "Tags": [
+              {
+                "Key": "Project",
+                "Value": "nestjs-aws-serverless"
+              },
+              {
+                "Key": "Environment",
+                "Value": "dev"
+              },
+              {
+                "Key": "Owner",
+                "Value": "course-team"
+              }
             ]
           }
         }
@@ -1020,11 +1274,14 @@
       "Outputs": {}
     },
     "configValidationMode": "warn",
-    "serviceFilename": "serverless.yml",
+    "serviceFilename": "serverless",
     "initialServerlessConfig": {
       "service": "nestjs-aws-serverless",
       "plugins": {
         "$ref": "$[\"service\"][\"plugins\"]"
+      },
+      "build": {
+        "esbuild": false
       },
       "provider": {
         "$ref": "$[\"service\"][\"provider\"]"
@@ -1039,11 +1296,15 @@
         "$ref": "$[\"service\"][\"resources\"]"
       }
     },
-    "layers": {},
-    "isDashboardMonitoringPreconfigured": false
+    "appId": null,
+    "orgId": null,
+    "build": {
+      "$ref": "$[\"service\"][\"initialServerlessConfig\"][\"build\"]"
+    },
+    "layers": {}
   },
   "package": {
-    "artifactDirectoryName": "serverless/nestjs-aws-serverless/dev/1791978794047-2026-10-14T11:53:14.047Z",
+    "artifactDirectoryName": "serverless/nestjs-aws-serverless/dev/1792130720375-2026-10-16T06:05:20.375Z",
     "artifact": "nestjs-aws-serverless.zip"
   }
 }

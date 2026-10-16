@@ -35,15 +35,5 @@ export const handler: PromiseApiHandler = async (
     throw error;
   }
 
-  return new Promise<APIGatewayProxyResultV2>((resolve, reject) => {
-    serverHandler(event, context, (error, result) => {
-      if (error) {
-        reject(error);
-      } else if (result === undefined) {
-        reject(new Error('Lambda HTTP adapter returned no response'));
-      } else {
-        resolve(result);
-      }
-    });
-  });
+  return serverHandler(event, context) as Promise<APIGatewayProxyResultV2>;
 };

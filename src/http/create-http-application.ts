@@ -12,7 +12,8 @@ import { AppModule } from '../app.module';
 export async function createHttpApplication(): Promise<INestApplication> {
   const app = await NestFactory.create(AppModule, { bodyParser: false });
   const configService = app.get(ConfigService);
-  const docsEnabled = configService.getOrThrow<boolean>('API_DOCS_ENABLED');
+  const docsEnabled =
+    configService.getOrThrow<string>('API_DOCS_ENABLED') === 'true';
   const helmetOptions = {
     xPoweredBy: false,
     noSniff: true,

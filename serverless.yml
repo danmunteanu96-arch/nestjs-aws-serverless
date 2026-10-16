@@ -4,6 +4,9 @@ plugins:
   - serverless-esbuild
   - serverless-offline
 
+build:
+  esbuild: false
+
 provider:
   name: aws
   runtime: nodejs24.x
@@ -35,12 +38,12 @@ custom:
     keepNames: true
     sourcemap: false
     plugins: plugins.js
+    external:
+      - '@fastify/static'
     exclude:
       - '@nestjs/microservices'
       - '@nestjs/websockets'
       - 'cache-manager'
-      - 'class-transformer'
-      - 'class-validator'
     target: node24
     platform: node
     concurrency: 10
@@ -66,7 +69,6 @@ functions:
         - AuctionsExpirationRole
         - Arn
     timeout: 60
-    reservedConcurrency: 1
     events:
       - schedule:
           rate: rate(5 minutes)
