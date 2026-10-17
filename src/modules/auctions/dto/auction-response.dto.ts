@@ -22,4 +22,7 @@ export class AuctionResponseDto {
 
   @ApiPropertyOptional()
   highestBidderId?: string;
+
+  @ApiPropertyOptional({ description: 'Cognito sub of the auction creator' })
+  createdBy?: string;
 }

@@ -16,7 +16,7 @@ describe('AuctionsController', () => {
   };
   const auctionsService = {
     create: jest
-      .fn<(input: CreateAuctionDto) => Promise<typeof auction>>()
+      .fn<(input: CreateAuctionDto, createdBy: string) => Promise<typeof auction>>()
       .mockResolvedValue(auction),
     getAll: jest
       .fn<(status?: AuctionStatus) => Promise<(typeof auction)[]>>()
@@ -31,7 +31,9 @@ describe('AuctionsController', () => {
       .fn<(id: string, input: UpdateAuctionDto) => Promise<typeof auction>>()
       .mockResolvedValue(auction),
     placeBid: jest
-      .fn<(id: string, input: PlaceBidDto) => Promise<typeof auction>>()
+      .fn<
+        (id: string, input: PlaceBidDto, bidderId: string) => Promise<typeof auction>
+      >()
       .mockResolvedValue(auction),
   };
   const controller = new AuctionsController(
@@ -73,28 +75,35 @@ describe('AuctionsController', () => {
     });
   });
 
-  it('delegates bid placement to the service', async () => {
+  it('delegates bid placement to the service with the authenticated bidder', async () => {
     await expect(
-      controller.placeBid('auction-1', { bidderId: 'bidder-1', amount: 20 }),
+      controller.placeBid('auction-1', { amount: 20 }, { sub: 'bidder-1' }),
     ).resolves.toEqual(auction);
-    expect(auctionsService.placeBid).toHaveBeenCalledWith('auction-1', {
-      bidderId: 'bidder-1',
-      amount: 20,
-    });
+    expect(auctionsService.placeBid).toHaveBeenCalledWith(
+      'auction-1',
+      { amount: 20 },
+      'bidder-1',
+    );
   });
 
-  it('delegates valid auction data to the service', async () => {
+  it('delegates valid auction data to the service with the authenticated creator', async () => {
     await expect(
-      controller.create({
+      controller.create(
+        {
+          title: 'Vintage camera',
+          status: 'ACTIVE',
+          endDate: '2026-10-20T12:00:00+02:00',
+        },
+        { sub: 'user-1' },
+      ),
+    ).resolves.toEqual(auction);
+    expect(auctionsService.create).toHaveBeenCalledWith(
+      {
         title: 'Vintage camera',
         status: 'ACTIVE',
         endDate: '2026-10-20T12:00:00+02:00',
-      }),
-    ).resolves.toEqual(auction);
-    expect(auctionsService.create).toHaveBeenCalledWith({
-      title: 'Vintage camera',
-      status: 'ACTIVE',
-      endDate: '2026-10-20T12:00:00+02:00',
-    });
+      },
+      'user-1',
+    );
   });
 });

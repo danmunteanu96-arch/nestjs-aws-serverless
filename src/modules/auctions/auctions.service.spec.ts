@@ -9,6 +9,7 @@ import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   NotFoundException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -30,11 +31,14 @@ describe('AuctionsService', () => {
   });
 
   it('persists a new auction and returns it', async () => {
-    const auction = await service.create({
-      title: 'Vintage camera',
-      status: 'ACTIVE',
-      endDate: '2026-10-20T10:00:00.000Z',
-    });
+    const auction = await service.create(
+      {
+        title: 'Vintage camera',
+        status: 'ACTIVE',
+        endDate: '2026-10-20T10:00:00.000Z',
+      },
+      'user-1',
+    );
 
     expect(dynamoDb.send).toHaveBeenCalledWith(expect.any(PutItemCommand));
     const command = dynamoDb.send.mock.calls[0][0] as PutItemCommand;
@@ -48,11 +52,13 @@ describe('AuctionsService', () => {
         endDate: { S: '2026-10-20T10:00:00.000Z' },
         createdAt: { S: auction.createdAt },
         currentBid: { N: '0' },
+        createdBy: { S: 'user-1' },
       },
     });
     expect(new Date(auction.createdAt).toISOString()).toBe(auction.createdAt);
     expect(auction.currentBid).toBe(0);
     expect(auction.endDate).toBe('2026-10-20T10:00:00.000Z');
+    expect(auction.createdBy).toBe('user-1');
   });
 
   it('queries active auctions by ending date', async () => {
@@ -267,11 +273,13 @@ describe('AuctionsService', () => {
         createdAt: { S: '2026-10-10T12:00:00.000Z' },
         currentBid: { N: '40' },
         highestBidderId: { S: 'bidder-1' },
+        createdBy: { S: 'user-1' },
+        bidders: { L: [{ S: 'bidder-1' }] },
       },
     });
 
     await expect(
-      service.placeBid('auction-1', { bidderId: 'bidder-1', amount: 40 }),
+      service.placeBid('auction-1', { amount: 40 }, 'bidder-1'),
     ).resolves.toEqual({
       id: 'auction-1',
       title: 'Vintage camera',
@@ -279,20 +287,70 @@ describe('AuctionsService', () => {
       createdAt: '2026-10-10T12:00:00.000Z',
       currentBid: 40,
       highestBidderId: 'bidder-1',
+      createdBy: 'user-1',
+      bidders: ['bidder-1'],
     });
 
     expect(dynamoDb.send).toHaveBeenCalledWith(expect.any(UpdateItemCommand));
     const command = dynamoDb.send.mock.calls[0][0] as UpdateItemCommand;
     expect(command.input).toMatchObject({
       Key: { id: { S: 'auction-1' } },
+      UpdateExpression:
+        'SET #currentBid = :amount, #highestBidderId = :bidderId, #bidders = list_append(if_not_exists(#bidders, :emptyList), :newBidder)',
       ConditionExpression:
-        'attribute_exists(#id) AND #status = :active AND (attribute_not_exists(#currentBid) OR #currentBid < :amount)',
+        'attribute_exists(#id) AND #status = :active AND (attribute_not_exists(#currentBid) OR #currentBid < :amount) AND (attribute_not_exists(#createdBy) OR #createdBy <> :bidderId) AND (attribute_not_exists(#bidders) OR NOT contains(#bidders, :bidderId))',
       ExpressionAttributeValues: {
         ':active': { S: 'ACTIVE' },
         ':amount': { N: '40' },
         ':bidderId': { S: 'bidder-1' },
+        ':emptyList': { L: [] },
+        ':newBidder': { L: [{ S: 'bidder-1' }] },
       },
     });
+  });
+
+  it('rejects a bid from the auction creator', async () => {
+    const conditionalError = new Error('Condition failed');
+    conditionalError.name = 'ConditionalCheckFailedException';
+    dynamoDb.send
+      .mockRejectedValueOnce(conditionalError)
+      .mockResolvedValueOnce({
+        Item: {
+          id: { S: 'auction-1' },
+          title: { S: 'Vintage camera' },
+          status: { S: 'ACTIVE' },
+          createdAt: { S: '2026-10-10T12:00:00.000Z' },
+          currentBid: { N: '0' },
+          createdBy: { S: 'user-1' },
+        },
+      });
+
+    await expect(
+      service.placeBid('auction-1', { amount: 10 }, 'user-1'),
+    ).rejects.toThrow(ForbiddenException);
+  });
+
+  it('rejects a second bid from the same user', async () => {
+    const conditionalError = new Error('Condition failed');
+    conditionalError.name = 'ConditionalCheckFailedException';
+    dynamoDb.send
+      .mockRejectedValueOnce(conditionalError)
+      .mockResolvedValueOnce({
+        Item: {
+          id: { S: 'auction-1' },
+          title: { S: 'Vintage camera' },
+          status: { S: 'ACTIVE' },
+          createdAt: { S: '2026-10-10T12:00:00.000Z' },
+          currentBid: { N: '40' },
+          highestBidderId: { S: 'bidder-1' },
+          createdBy: { S: 'user-1' },
+          bidders: { L: [{ S: 'bidder-1' }] },
+        },
+      });
+
+    await expect(
+      service.placeBid('auction-1', { amount: 50 }, 'bidder-1'),
+    ).rejects.toThrow('You have already placed a bid on this auction');
   });
 
   it('rejects a bid that does not beat the current bid', async () => {
@@ -311,7 +369,7 @@ describe('AuctionsService', () => {
       });
 
     await expect(
-      service.placeBid('auction-1', { bidderId: 'bidder-2', amount: 39 }),
+      service.placeBid('auction-1', { amount: 39 }, 'bidder-2'),
     ).rejects.toThrow(ConflictException);
   });
 
@@ -323,10 +381,7 @@ describe('AuctionsService', () => {
       .mockResolvedValueOnce({});
 
     await expect(
-      service.placeBid('missing-auction', {
-        bidderId: 'bidder-1',
-        amount: 10,
-      }),
+      service.placeBid('missing-auction', { amount: 10 }, 'bidder-1'),
     ).rejects.toThrow(NotFoundException);
   });
 
@@ -353,11 +408,14 @@ describe('AuctionsService', () => {
     );
 
     await expect(
-      service.create({
-        title: 'Vintage camera',
-        status: 'ACTIVE',
-        endDate: '2026-10-20T10:00:00.000Z',
-      }),
+      service.create(
+        {
+          title: 'Vintage camera',
+          status: 'ACTIVE',
+          endDate: '2026-10-20T10:00:00.000Z',
+        },
+        'user-1',
+      ),
     ).rejects.toThrow('Failed to create auction');
   });
 });

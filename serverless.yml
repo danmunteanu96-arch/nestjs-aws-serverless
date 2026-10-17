@@ -24,6 +24,20 @@ provider:
     Project: ${self:service}
     Environment: ${sls:stage}
     Owner: ${env:RESOURCE_OWNER, 'course-team'}
+  httpApi:
+    cors: true
+    authorizers:
+      cognitoAuthorizer:
+        identitySource: $request.header.Authorization
+        issuerUrl:
+          Fn::Join:
+            - ''
+            - - 'https://cognito-idp.'
+              - Ref: AWS::Region
+              - '.amazonaws.com/'
+              - Ref: CognitoUserPool
+        audience:
+          - Ref: CognitoUserPoolClient
   environment:
     NODE_ENV: production
     CORS_ORIGINS: ${env:CORS_ORIGINS, ''}
@@ -58,10 +72,20 @@ functions:
     events:
       - httpApi:
           path: '/'
-          method: '*'
+          method: GET
       - httpApi:
           path: '/{proxy+}'
-          method: '*'
+          method: GET
+      - httpApi:
+          path: '/{proxy+}'
+          method: POST
+          authorizer:
+            name: cognitoAuthorizer
+      - httpApi:
+          path: '/{proxy+}'
+          method: PATCH
+          authorizer:
+            name: cognitoAuthorizer
   closeExpiredAuctions:
     handler: src/auction-expiration.handler
     role:
@@ -79,3 +103,22 @@ resources:
     AuctionsTable: ${file(./resources/AuctionTableResource.yml):AuctionsTable}
     AuctionsApiRole: ${file(./iam/AuctionTableIAM.yml):AuctionsApiRole}
     AuctionsExpirationRole: ${file(./iam/AuctionTableIAM.yml):AuctionsExpirationRole}
+    CognitoUserPool: ${file(./resources/CognitoAuthResource.yml):CognitoUserPool}
+    CognitoUserPoolDomain: ${file(./resources/CognitoAuthResource.yml):CognitoUserPoolDomain}
+    CognitoUserPoolClient: ${file(./resources/CognitoAuthResource.yml):CognitoUserPoolClient}
+  Outputs:
+    CognitoUserPoolId:
+      Value:
+        Ref: CognitoUserPool
+    CognitoUserPoolClientId:
+      Value:
+        Ref: CognitoUserPoolClient
+    CognitoHostedUIUrl:
+      Value:
+        Fn::Join:
+          - ''
+          - - 'https://'
+            - Ref: CognitoUserPoolDomain
+            - '.auth.'
+            - Ref: AWS::Region
+            - '.amazoncognito.com'

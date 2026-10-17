@@ -1,0 +1,69 @@
+# Resurse Cognito pentru autentificare (User Pool + Hosted UI + client public).
+# Validarea JWT se face in API Gateway (JWT authorizer) — vezi serverless.yml.
+
+# AWS::Cognito::UserPool nu suporta Tags in CloudFormation (tagging doar prin TagResource API);
+# tagurile stack-ului (Project/Environment/Owner din provider.stackTags) nu se propaga pe UserPool.
+CognitoUserPool:
+  Type: AWS::Cognito::UserPool
+  DeletionPolicy: Retain
+  UpdateReplacePolicy: Retain
+  Properties:
+    UserPoolName: ${self:service}-users-${sls:stage}
+    UsernameAttributes:
+      - email
+    AutoVerifiedAttributes:
+      - email
+    Policies:
+      PasswordPolicy:
+        MinimumLength: 8
+        RequireLowercase: true
+        RequireUppercase: true
+        RequireNumbers: true
+        RequireSymbols: true
+    MfaConfiguration: 'OFF'
+    AccountRecoverySetting:
+      RecoveryMechanisms:
+        - Name: verified_email
+          Priority: 1
+
+# Domeniul Hosted UI trebuie sa fie global unic si NU poate contine cuvinte rezervate ("aws", "amazon", "cognito")
+CognitoUserPoolDomain:
+  Type: AWS::Cognito::UserPoolDomain
+  Properties:
+    Domain: serverless-auctions-${sls:stage}-${aws:accountId}
+    UserPoolId:
+      Ref: CognitoUserPool
+
+# Client public (fara secret): Hosted UI + testare token prin AWS CLI
+CognitoUserPoolClient:
+  Type: AWS::Cognito::UserPoolClient
+  Properties:
+    ClientName: ${self:service}-client-${sls:stage}
+    UserPoolId:
+      Ref: CognitoUserPool
+    GenerateSecret: false
+    AllowedOAuthFlowsUserPoolClient: true
+    AllowedOAuthFlows:
+      - code
+    AllowedOAuthScopes:
+      - openid
+      - email
+      - profile
+    CallbackURLs:
+      - http://localhost:3000/callback
+    LogoutURLs:
+      - http://localhost:3000/
+    SupportedIdentityProviders:
+      - COGNITO
+    ExplicitAuthFlows:
+      - ALLOW_USER_PASSWORD_AUTH
+      - ALLOW_USER_SRP_AUTH
+      - ALLOW_REFRESH_TOKEN_AUTH
+    AccessTokenValidity: 1
+    IdTokenValidity: 1
+    RefreshTokenValidity: 30
+    TokenValidityUnits:
+      AccessToken: hours
+      IdToken: hours
+      RefreshToken: days
+    PreventUserExistenceErrors: ENABLED

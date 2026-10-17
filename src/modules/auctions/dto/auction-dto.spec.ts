@@ -34,14 +34,17 @@ describe('auction DTOs', () => {
   });
 
   it('rejects non-positive bid amounts', async () => {
-    const dto = plainToInstance(PlaceBidDto, {
-      bidderId: 'bidder-1',
-      amount: 0,
-    });
+    const dto = plainToInstance(PlaceBidDto, { amount: 0 });
 
     expect((await validate(dto)).map((error) => error.property)).toContain(
       'amount',
     );
+  });
+
+  it('accepts a valid bid amount without a bidder id', async () => {
+    const dto = plainToInstance(PlaceBidDto, { amount: 25 });
+
+    await expect(validate(dto)).resolves.toHaveLength(0);
   });
 
   it('allows partial updates', async () => {

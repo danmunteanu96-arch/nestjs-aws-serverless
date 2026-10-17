@@ -1,7 +1,7 @@
 {
   "info": {
     "name": "Serverless Auctions API",
-    "description": "End-to-end auction flow. Run requests in order; wait approximately 5-10 minutes before verifying auto-close.",
+    "description": "End-to-end auction flow. Run requests in order; wait approximately 5-10 minutes before verifying auto-close.\n\nAuth: mutations (create/update/bid) require a Cognito JWT. There are no /auth/register or /auth/login endpoints in this API — registration and login happen directly against Cognito (Hosted UI or the Cognito API). Set the `accessToken` collection variable with an IdToken from the User Pool: run ./scripts/create-cognito-test-user.sh <email> <password> to create+confirm a user and print a token, or use an existing user (dev test user: testuser@example.com). The bidder/creator identity is taken from the JWT — the bid body only carries `amount`. Business rules: the auction creator cannot bid on their own auction, and each user can bid only once per auction. GET requests stay public.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
@@ -18,8 +18,8 @@
       "value": ""
     },
     {
-      "key": "bidderId",
-      "value": "postman-bidder"
+      "key": "accessToken",
+      "value": ""
     },
     {
       "key": "updatedTitle",
@@ -80,6 +80,16 @@
       ],
       "request": {
         "method": "POST",
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{accessToken}}",
+              "type": "string"
+            }
+          ]
+        },
         "header": [
           {
             "key": "Content-Type",
@@ -125,6 +135,16 @@
       "name": "Update auction title",
       "request": {
         "method": "PATCH",
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{accessToken}}",
+              "type": "string"
+            }
+          ]
+        },
         "header": [
           {
             "key": "Content-Type",
@@ -163,6 +183,16 @@
       "name": "Place bid",
       "request": {
         "method": "POST",
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{accessToken}}",
+              "type": "string"
+            }
+          ]
+        },
         "header": [
           {
             "key": "Content-Type",
@@ -171,7 +201,7 @@
         ],
         "body": {
           "mode": "raw",
-          "raw": "{\n  \"bidderId\": \"{{bidderId}}\",\n  \"amount\": 25\n}",
+          "raw": "{\n  \"amount\": 25\n}",
           "options": {
             "raw": {
               "language": "json"
@@ -190,7 +220,7 @@
               "  pm.response.to.have.status(201);",
               "  const auction = pm.response.json();",
               "  pm.expect(auction.currentBid).to.eql(25);",
-              "  pm.expect(auction.highestBidderId).to.eql(pm.collectionVariables.get('bidderId'));",
+              "  pm.expect(auction.highestBidderId).to.be.a('string');",
               "});"
             ]
           }

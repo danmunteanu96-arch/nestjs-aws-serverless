@@ -1,13 +1,33 @@
 import { INestApplication } from '@nestjs/common';
 import { afterEach, beforeEach, describe, expect, it } from '@jest/globals';
 import request from 'supertest';
+import type { NextFunction, Request, Response } from 'express';
 import { createHttpApplication } from './../src/http/create-http-application';
+import type { RequestWithApiGateway } from './../src/common/decorators/current-user.decorator';
+
+// Simulates the claims the API Gateway JWT authorizer injects on real requests,
+// so validation/pipeline behaviour can be exercised locally.
+const fakeGatewayClaims = (
+  req: Request,
+  _res: Response,
+  next: NextFunction,
+) => {
+  (req as RequestWithApiGateway).apiGateway = {
+    event: {
+      requestContext: {
+        authorizer: { jwt: { claims: { sub: 'e2e-user' } } },
+      },
+    },
+  };
+  next();
+};
 
 describe('HTTP API (e2e)', () => {
   let app: INestApplication;
 
   beforeEach(async () => {
     app = await createHttpApplication();
+    app.use(fakeGatewayClaims);
     await app.init();
   });
 
@@ -60,6 +80,23 @@ describe('HTTP API (e2e)', () => {
         expect(body.statusCode).toBe(400);
         expect(body.requestId).toBe(headers['x-request-id']);
       });
+  });
+
+  it('rejects mutations without API Gateway JWT claims', async () => {
+    const anonymousApp = await createHttpApplication();
+    await anonymousApp.init();
+    try {
+      await request(anonymousApp.getHttpServer())
+        .post('/auctions')
+        .send({
+          title: 'Anonymous auction',
+          status: 'ACTIVE',
+          endDate: '2030-01-01T00:00:00.000Z',
+        })
+        .expect(401);
+    } finally {
+      await anonymousApp.close();
+    }
   });
 
   it('rejects unknown auction status filters', () => {

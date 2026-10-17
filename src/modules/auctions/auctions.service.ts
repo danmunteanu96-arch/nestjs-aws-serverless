@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   InternalServerErrorException,
   Injectable,
   Logger,
@@ -32,7 +33,10 @@ export class AuctionsService {
     private readonly configService: ConfigService,
   ) {}
 
-  async create(validInput: CreateAuctionDto): Promise<Auction> {
+  async create(
+    validInput: CreateAuctionDto,
+    createdBy: string,
+  ): Promise<Auction> {
     const tableName = this.configService.getOrThrow<string>('AUCTIONS_TABLE');
     const auction: Auction = {
       id: crypto.randomUUID(),
@@ -41,6 +45,7 @@ export class AuctionsService {
       endDate: validInput.endDate,
       createdAt: new Date().toISOString(),
       currentBid: 0,
+      createdBy,
     };
 
     try {
@@ -55,6 +60,7 @@ export class AuctionsService {
             endDate: { S: validInput.endDate },
             createdAt: { S: auction.createdAt },
             currentBid: { N: '0' },
+            createdBy: { S: createdBy },
           },
         }),
       );
@@ -255,7 +261,11 @@ export class AuctionsService {
     return this.toAuction(attributes);
   }
 
-  async placeBid(auctionId: string, bid: PlaceBidDto): Promise<Auction> {
+  async placeBid(
+    auctionId: string,
+    bid: PlaceBidDto,
+    bidderId: string,
+  ): Promise<Auction> {
     const tableName = this.configService.getOrThrow<string>('AUCTIONS_TABLE');
 
     try {
@@ -264,19 +274,23 @@ export class AuctionsService {
           TableName: tableName,
           Key: { id: { S: auctionId } },
           UpdateExpression:
-            'SET #currentBid = :amount, #highestBidderId = :bidderId',
+            'SET #currentBid = :amount, #highestBidderId = :bidderId, #bidders = list_append(if_not_exists(#bidders, :emptyList), :newBidder)',
           ConditionExpression:
-            'attribute_exists(#id) AND #status = :active AND (attribute_not_exists(#currentBid) OR #currentBid < :amount)',
+            'attribute_exists(#id) AND #status = :active AND (attribute_not_exists(#currentBid) OR #currentBid < :amount) AND (attribute_not_exists(#createdBy) OR #createdBy <> :bidderId) AND (attribute_not_exists(#bidders) OR NOT contains(#bidders, :bidderId))',
           ExpressionAttributeNames: {
             '#id': 'id',
             '#status': 'status',
             '#currentBid': 'currentBid',
             '#highestBidderId': 'highestBidderId',
+            '#createdBy': 'createdBy',
+            '#bidders': 'bidders',
           },
           ExpressionAttributeValues: {
             ':active': { S: 'ACTIVE' },
             ':amount': { N: String(bid.amount) },
-            ':bidderId': { S: bid.bidderId },
+            ':bidderId': { S: bidderId },
+            ':emptyList': { L: [] },
+            ':newBidder': { L: [{ S: bidderId }] },
           },
           ReturnValues: 'ALL_NEW',
         }),
@@ -298,6 +312,16 @@ export class AuctionsService {
             'Bids can only be placed on active auctions',
           );
         }
+        if (currentAuction.createdBy === bidderId) {
+          throw new ForbiddenException(
+            'Auction creators cannot bid on their own auctions',
+          );
+        }
+        if (currentAuction.bidders?.includes(bidderId)) {
+          throw new ConflictException(
+            'You have already placed a bid on this auction',
+          );
+        }
         throw new ConflictException(
           `Bid amount must be greater than the current bid of ${currentAuction.currentBid}`,
         );
@@ -316,6 +340,10 @@ export class AuctionsService {
     const currentBid =
       item.currentBid?.N === undefined ? 0 : Number(item.currentBid.N);
     const highestBidderId = item.highestBidderId?.S;
+    const createdBy = item.createdBy?.S;
+    const bidders = item.bidders?.L?.map((bidder) => bidder.S).filter(
+      (bidder): bidder is string => typeof bidder === 'string',
+    );
     const endDate = item.endDate?.S;
     const isValidStatus =
       status === AuctionStatus.ACTIVE || status === AuctionStatus.CLOSED;
@@ -342,6 +370,8 @@ export class AuctionsService {
       ...(endDate ? { endDate } : {}),
       currentBid,
       ...(highestBidderId ? { highestBidderId } : {}),
+      ...(createdBy ? { createdBy } : {}),
+      ...(bidders && bidders.length > 0 ? { bidders } : {}),
     };
   }
 }

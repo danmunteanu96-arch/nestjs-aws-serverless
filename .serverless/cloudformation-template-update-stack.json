@@ -92,7 +92,7 @@
           "S3Bucket": {
             "Ref": "ServerlessDeploymentBucket"
           },
-          "S3Key": "serverless/nestjs-aws-serverless/dev/1792130720375-2026-10-16T06:05:20.375Z/nestjs-aws-serverless.zip"
+          "S3Key": "serverless/nestjs-aws-serverless/dev/1792225161362-2026-10-17T08:19:21.362Z/nestjs-aws-serverless.zip"
         },
         "Handler": "src/lambda.handler",
         "Runtime": "nodejs24.x",
@@ -145,7 +145,7 @@
           "S3Bucket": {
             "Ref": "ServerlessDeploymentBucket"
           },
-          "S3Key": "serverless/nestjs-aws-serverless/dev/1792130720375-2026-10-16T06:05:20.375Z/nestjs-aws-serverless.zip"
+          "S3Key": "serverless/nestjs-aws-serverless/dev/1792225161362-2026-10-17T08:19:21.362Z/nestjs-aws-serverless.zip"
         },
         "Handler": "src/auction-expiration.handler",
         "Runtime": "nodejs24.x",
@@ -191,24 +191,24 @@
         "AuctionsExpirationRole"
       ]
     },
-    "ApiLambdaVersionofKDRuBKJ5App3srs2ctXWxuyQXjcGxC2Qna6GF4k": {
+    "ApiLambdaVersionA9VCekL19HYl5hez5vzD5CNwVwhzhPmE2fEJZ0kKkWo": {
       "Type": "AWS::Lambda::Version",
       "DeletionPolicy": "Retain",
       "Properties": {
         "FunctionName": {
           "Ref": "ApiLambdaFunction"
         },
-        "CodeSha256": "CVISvfcxDY/D0alVXBHQOqwnrg+b0e+srTwpSKme/2k="
+        "CodeSha256": "vVnNp1a30YIsB6Gp3+jwrql6kcUyJ7tMFpQp74ZTkuQ="
       }
     },
-    "CloseExpiredAuctionsLambdaVersionS4feBDHeQXXqjVqYwHviccDMmeQTi6BCcGYzVlXUeS0": {
+    "CloseExpiredAuctionsLambdaVersiontG2lXxKUvKyWHRWedKeXMNuVRimRQZJr6C5YZ5JT6U": {
       "Type": "AWS::Lambda::Version",
       "DeletionPolicy": "Retain",
       "Properties": {
         "FunctionName": {
           "Ref": "CloseExpiredAuctionsLambdaFunction"
         },
-        "CodeSha256": "CVISvfcxDY/D0alVXBHQOqwnrg+b0e+srTwpSKme/2k="
+        "CodeSha256": "vVnNp1a30YIsB6Gp3+jwrql6kcUyJ7tMFpQp74ZTkuQ="
       }
     },
     "CloseExpiredAuctionsEventsRuleSchedule1": {
@@ -257,6 +257,26 @@
           "Project": "nestjs-aws-serverless",
           "Environment": "dev",
           "Owner": "course-team"
+        },
+        "CorsConfiguration": {
+          "AllowHeaders": [
+            "Content-Type",
+            "X-Amz-Date",
+            "Authorization",
+            "X-Api-Key",
+            "X-Amz-Security-Token",
+            "X-Amz-User-Agent",
+            "X-Amzn-Trace-Id"
+          ],
+          "AllowMethods": [
+            "OPTIONS",
+            "GET",
+            "POST",
+            "PATCH"
+          ],
+          "AllowOrigins": [
+            "*"
+          ]
         }
       }
     },
@@ -275,6 +295,41 @@
           "Project": "nestjs-aws-serverless",
           "Environment": "dev",
           "Owner": "course-team"
+        }
+      }
+    },
+    "HttpApiAuthorizerCognitoAuthorizer": {
+      "Type": "AWS::ApiGatewayV2::Authorizer",
+      "Properties": {
+        "ApiId": {
+          "Ref": "HttpApi"
+        },
+        "Name": "cognitoAuthorizer",
+        "IdentitySource": [
+          "$request.header.Authorization"
+        ],
+        "AuthorizerType": "JWT",
+        "JwtConfiguration": {
+          "Audience": [
+            {
+              "Ref": "CognitoUserPoolClient"
+            }
+          ],
+          "Issuer": {
+            "Fn::Join": [
+              "",
+              [
+                "https://cognito-idp.",
+                {
+                  "Ref": "AWS::Region"
+                },
+                ".amazonaws.com/",
+                {
+                  "Ref": "CognitoUserPool"
+                }
+              ]
+            ]
+          }
         }
       }
     },
@@ -332,13 +387,13 @@
         "TimeoutInMillis": 30000
       }
     },
-    "HttpApiRouteAny": {
+    "HttpApiRouteGet": {
       "Type": "AWS::ApiGatewayV2::Route",
       "Properties": {
         "ApiId": {
           "Ref": "HttpApi"
         },
-        "RouteKey": "ANY /",
+        "RouteKey": "GET /",
         "Target": {
           "Fn::Join": [
             "/",
@@ -353,13 +408,13 @@
       },
       "DependsOn": "HttpApiIntegrationApi"
     },
-    "HttpApiRouteAnyProxyVar": {
+    "HttpApiRouteGetProxyVar": {
       "Type": "AWS::ApiGatewayV2::Route",
       "Properties": {
         "ApiId": {
           "Ref": "HttpApi"
         },
-        "RouteKey": "ANY /{proxy+}",
+        "RouteKey": "GET /{proxy+}",
         "Target": {
           "Fn::Join": [
             "/",
@@ -370,6 +425,56 @@
               }
             ]
           ]
+        }
+      },
+      "DependsOn": "HttpApiIntegrationApi"
+    },
+    "HttpApiRoutePostProxyVar": {
+      "Type": "AWS::ApiGatewayV2::Route",
+      "Properties": {
+        "ApiId": {
+          "Ref": "HttpApi"
+        },
+        "RouteKey": "POST /{proxy+}",
+        "Target": {
+          "Fn::Join": [
+            "/",
+            [
+              "integrations",
+              {
+                "Ref": "HttpApiIntegrationApi"
+              }
+            ]
+          ]
+        },
+        "AuthorizationType": "JWT",
+        "AuthorizerId": {
+          "Ref": "HttpApiAuthorizerCognitoAuthorizer"
+        }
+      },
+      "DependsOn": "HttpApiIntegrationApi"
+    },
+    "HttpApiRoutePatchProxyVar": {
+      "Type": "AWS::ApiGatewayV2::Route",
+      "Properties": {
+        "ApiId": {
+          "Ref": "HttpApi"
+        },
+        "RouteKey": "PATCH /{proxy+}",
+        "Target": {
+          "Fn::Join": [
+            "/",
+            [
+              "integrations",
+              {
+                "Ref": "HttpApiIntegrationApi"
+              }
+            ]
+          ]
+        },
+        "AuthorizationType": "JWT",
+        "AuthorizerId": {
+          "Ref": "HttpApiAuthorizerCognitoAuthorizer"
         }
       },
       "DependsOn": "HttpApiIntegrationApi"
@@ -690,6 +795,89 @@
           }
         ]
       }
+    },
+    "CognitoUserPool": {
+      "Type": "AWS::Cognito::UserPool",
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain",
+      "Properties": {
+        "UserPoolName": "nestjs-aws-serverless-users-dev",
+        "UsernameAttributes": [
+          "email"
+        ],
+        "AutoVerifiedAttributes": [
+          "email"
+        ],
+        "Policies": {
+          "PasswordPolicy": {
+            "MinimumLength": 8,
+            "RequireLowercase": true,
+            "RequireUppercase": true,
+            "RequireNumbers": true,
+            "RequireSymbols": true
+          }
+        },
+        "MfaConfiguration": "OFF",
+        "AccountRecoverySetting": {
+          "RecoveryMechanisms": [
+            {
+              "Name": "verified_email",
+              "Priority": 1
+            }
+          ]
+        }
+      }
+    },
+    "CognitoUserPoolDomain": {
+      "Type": "AWS::Cognito::UserPoolDomain",
+      "Properties": {
+        "Domain": "serverless-auctions-dev-205952665307",
+        "UserPoolId": {
+          "Ref": "CognitoUserPool"
+        }
+      }
+    },
+    "CognitoUserPoolClient": {
+      "Type": "AWS::Cognito::UserPoolClient",
+      "Properties": {
+        "ClientName": "nestjs-aws-serverless-client-dev",
+        "UserPoolId": {
+          "Ref": "CognitoUserPool"
+        },
+        "GenerateSecret": false,
+        "AllowedOAuthFlowsUserPoolClient": true,
+        "AllowedOAuthFlows": [
+          "code"
+        ],
+        "AllowedOAuthScopes": [
+          "openid",
+          "email",
+          "profile"
+        ],
+        "CallbackURLs": [
+          "http://localhost:3000/callback"
+        ],
+        "LogoutURLs": [
+          "http://localhost:3000/"
+        ],
+        "SupportedIdentityProviders": [
+          "COGNITO"
+        ],
+        "ExplicitAuthFlows": [
+          "ALLOW_USER_PASSWORD_AUTH",
+          "ALLOW_USER_SRP_AUTH",
+          "ALLOW_REFRESH_TOKEN_AUTH"
+        ],
+        "AccessTokenValidity": 1,
+        "IdTokenValidity": 1,
+        "RefreshTokenValidity": 30,
+        "TokenValidityUnits": {
+          "AccessToken": "hours",
+          "IdToken": "hours",
+          "RefreshToken": "days"
+        },
+        "PreventUserExistenceErrors": "ENABLED"
+      }
     }
   },
   "Outputs": {
@@ -704,7 +892,7 @@
     "ApiLambdaFunctionQualifiedArn": {
       "Description": "Current Lambda function version",
       "Value": {
-        "Ref": "ApiLambdaVersionofKDRuBKJ5App3srs2ctXWxuyQXjcGxC2Qna6GF4k"
+        "Ref": "ApiLambdaVersionA9VCekL19HYl5hez5vzD5CNwVwhzhPmE2fEJZ0kKkWo"
       },
       "Export": {
         "Name": "sls-nestjs-aws-serverless-dev-ApiLambdaFunctionQualifiedArn"
@@ -713,7 +901,7 @@
     "CloseExpiredAuctionsLambdaFunctionQualifiedArn": {
       "Description": "Current Lambda function version",
       "Value": {
-        "Ref": "CloseExpiredAuctionsLambdaVersionS4feBDHeQXXqjVqYwHviccDMmeQTi6BCcGYzVlXUeS0"
+        "Ref": "CloseExpiredAuctionsLambdaVersiontG2lXxKUvKyWHRWedKeXMNuVRimRQZJr6C5YZ5JT6U"
       },
       "Export": {
         "Name": "sls-nestjs-aws-serverless-dev-CloseExpiredAuctionsLambdaFunctionQualifiedArn"
@@ -751,6 +939,34 @@
       },
       "Export": {
         "Name": "sls-nestjs-aws-serverless-dev-HttpApiUrl"
+      }
+    },
+    "CognitoUserPoolId": {
+      "Value": {
+        "Ref": "CognitoUserPool"
+      }
+    },
+    "CognitoUserPoolClientId": {
+      "Value": {
+        "Ref": "CognitoUserPoolClient"
+      }
+    },
+    "CognitoHostedUIUrl": {
+      "Value": {
+        "Fn::Join": [
+          "",
+          [
+            "https://",
+            {
+              "Ref": "CognitoUserPoolDomain"
+            },
+            ".auth.",
+            {
+              "Ref": "AWS::Region"
+            },
+            ".amazoncognito.com"
+          ]
+        ]
       }
     }
   }

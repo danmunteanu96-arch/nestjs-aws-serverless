@@ -17,4 +17,6 @@ export interface Auction extends Omit<CreateAuctionInput, 'endDate'> {
   endDate?: string;
   currentBid: number;
   highestBidderId?: string;
+  createdBy?: string;
+  bidders?: string[];
 }

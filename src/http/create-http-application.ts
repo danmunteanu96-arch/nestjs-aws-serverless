@@ -3,6 +3,7 @@ import { json, urlencoded } from 'express';
 import type { NextFunction, Request, Response } from 'express';
 import helmet from 'helmet';
 import { randomUUID } from 'node:crypto';
+import { eventContext } from '@codegenie/serverless-express/src/middleware';
 import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { NestFactory } from '@nestjs/core';
@@ -12,6 +13,9 @@ import { AppModule } from '../app.module';
 export async function createHttpApplication(): Promise<INestApplication> {
   const app = await NestFactory.create(AppModule, { bodyParser: false });
   const configService = app.get(ConfigService);
+  // Exposes the API Gateway event on req.apiGateway so decorators can read
+  // the JWT authorizer claims. Outside Lambda it attaches an empty object.
+  app.use(eventContext());
   const docsEnabled =
     configService.getOrThrow<string>('API_DOCS_ENABLED') === 'true';
   const helmetOptions = {

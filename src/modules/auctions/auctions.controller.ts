@@ -9,13 +9,17 @@ import {
   Query,
 } from '@nestjs/common';
 import {
+  ApiBearerAuth,
   ApiCreatedResponse,
   ApiOkResponse,
   ApiOperation,
   ApiParam,
   ApiQuery,
   ApiTags,
+  ApiUnauthorizedResponse,
 } from '@nestjs/swagger';
+import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import type { AuthenticatedUser } from '../../common/decorators/current-user.decorator';
 import { AuctionResponseDto } from './dto/auction-response.dto';
 import { AuctionStatusQueryDto } from './dto/auction-status-query.dto';
 import { CreateAuctionDto } from './dto/create-auction.dto';
@@ -53,9 +57,14 @@ export class AuctionsController {
   }
 
   @Post()
+  @ApiBearerAuth()
   @ApiCreatedResponse({ type: AuctionResponseDto })
-  create(@Body() body: CreateAuctionDto): Promise<AuctionResponseDto> {
-    return this.auctionsService.create(body);
+  @ApiUnauthorizedResponse({ description: 'Missing or invalid JWT' })
+  create(
+    @Body() body: CreateAuctionDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<AuctionResponseDto> {
+    return this.auctionsService.create(body, user.sub);
   }
 
   @Patch(':id')
@@ -70,11 +79,14 @@ export class AuctionsController {
 
   @Post(':id/bids')
   @ApiParam({ name: 'id', format: 'uuid' })
+  @ApiBearerAuth()
   @ApiCreatedResponse({ type: AuctionResponseDto })
+  @ApiUnauthorizedResponse({ description: 'Missing or invalid JWT' })
   placeBid(
     @Param('id', new ParseUUIDPipe()) id: string,
     @Body() body: PlaceBidDto,
+    @CurrentUser() user: AuthenticatedUser,
   ): Promise<AuctionResponseDto> {
-    return this.auctionsService.placeBid(id, body);
+    return this.auctionsService.placeBid(id, body, user.sub);
   }
 }
