@@ -265,33 +265,48 @@ export class AuctionsService {
     auctionId: string,
     bid: PlaceBidDto,
     bidderId: string,
+    bidderEmail?: string,
   ): Promise<Auction> {
     const tableName = this.configService.getOrThrow<string>('AUCTIONS_TABLE');
+
+    // highestBidderEmail is stored only when the JWT carries an email claim;
+    // it stays in DynamoDB for the expiration Lambda and is never mapped into
+    // API responses (see toAuction) to avoid leaking bidder PII.
+    const updates = ['#currentBid = :amount', '#highestBidderId = :bidderId'];
+    const expressionAttributeNames: Record<string, string> = {
+      '#id': 'id',
+      '#status': 'status',
+      '#currentBid': 'currentBid',
+      '#highestBidderId': 'highestBidderId',
+      '#createdBy': 'createdBy',
+      '#bidders': 'bidders',
+    };
+    const expressionAttributeValues: Record<string, AttributeValue> = {
+      ':active': { S: 'ACTIVE' },
+      ':amount': { N: String(bid.amount) },
+      ':bidderId': { S: bidderId },
+      ':emptyList': { L: [] },
+      ':newBidder': { L: [{ S: bidderId }] },
+    };
+    if (bidderEmail) {
+      updates.push('#highestBidderEmail = :bidderEmail');
+      expressionAttributeNames['#highestBidderEmail'] = 'highestBidderEmail';
+      expressionAttributeValues[':bidderEmail'] = { S: bidderEmail };
+    }
+    updates.push(
+      '#bidders = list_append(if_not_exists(#bidders, :emptyList), :newBidder)',
+    );
 
     try {
       const result = await this.dynamoDb.send(
         new UpdateItemCommand({
           TableName: tableName,
           Key: { id: { S: auctionId } },
-          UpdateExpression:
-            'SET #currentBid = :amount, #highestBidderId = :bidderId, #bidders = list_append(if_not_exists(#bidders, :emptyList), :newBidder)',
+          UpdateExpression: `SET ${updates.join(', ')}`,
           ConditionExpression:
             'attribute_exists(#id) AND #status = :active AND (attribute_not_exists(#currentBid) OR #currentBid < :amount) AND (attribute_not_exists(#createdBy) OR #createdBy <> :bidderId) AND (attribute_not_exists(#bidders) OR NOT contains(#bidders, :bidderId))',
-          ExpressionAttributeNames: {
-            '#id': 'id',
-            '#status': 'status',
-            '#currentBid': 'currentBid',
-            '#highestBidderId': 'highestBidderId',
-            '#createdBy': 'createdBy',
-            '#bidders': 'bidders',
-          },
-          ExpressionAttributeValues: {
-            ':active': { S: 'ACTIVE' },
-            ':amount': { N: String(bid.amount) },
-            ':bidderId': { S: bidderId },
-            ':emptyList': { L: [] },
-            ':newBidder': { L: [{ S: bidderId }] },
-          },
+          ExpressionAttributeNames: expressionAttributeNames,
+          ExpressionAttributeValues: expressionAttributeValues,
           ReturnValues: 'ALL_NEW',
         }),
       );

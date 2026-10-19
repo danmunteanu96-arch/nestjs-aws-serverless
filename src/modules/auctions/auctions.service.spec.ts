@@ -309,6 +309,39 @@ describe('AuctionsService', () => {
     });
   });
 
+  it('stores the bidder email as highestBidderEmail when placing a bid', async () => {
+    dynamoDb.send.mockResolvedValueOnce({
+      Attributes: {
+        id: { S: 'auction-1' },
+        title: { S: 'Vintage camera' },
+        status: { S: 'ACTIVE' },
+        createdAt: { S: '2026-10-10T12:00:00.000Z' },
+        currentBid: { N: '40' },
+        highestBidderId: { S: 'bidder-1' },
+        highestBidderEmail: { S: 'winner@example.com' },
+        createdBy: { S: 'user-1' },
+        bidders: { L: [{ S: 'bidder-1' }] },
+      },
+    });
+
+    await expect(
+      service.placeBid(
+        'auction-1',
+        { amount: 40 },
+        'bidder-1',
+        'winner@example.com',
+      ),
+    ).resolves.toMatchObject({ highestBidderId: 'bidder-1' });
+
+    const command = dynamoDb.send.mock.calls[0][0] as UpdateItemCommand;
+    expect(command.input.UpdateExpression).toContain(
+      '#highestBidderEmail = :bidderEmail',
+    );
+    expect(command.input.ExpressionAttributeValues).toMatchObject({
+      ':bidderEmail': { S: 'winner@example.com' },
+    });
+  });
+
   it('rejects a bid from the auction creator', async () => {
     const conditionalError = new Error('Condition failed');
     conditionalError.name = 'ConditionalCheckFailedException';

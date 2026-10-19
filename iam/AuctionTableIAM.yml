@@ -86,7 +86,17 @@ AuctionsExpirationRole:
                   - - Fn::GetAtt:
                         - AuctionsTable
                         - Arn
-                    - '/index/status-endDate-index'
+                    - '/index/status-endDate-v2-index'
+            # Production-style least privilege: recipients are unknown ahead of
+            # time (any user's email), so Resource is '*' and the restriction
+            # moves to the controllable part — WHO is allowed to send.
+            - Effect: Allow
+              Action:
+                - ses:SendEmail
+              Resource: '*'
+              Condition:
+                StringEquals:
+                  ses:FromAddress: ${env:SES_SENDER_EMAIL, 'unconfigured@example.com'}
     Tags:
       - Key: Project
         Value: nestjs-aws-serverless

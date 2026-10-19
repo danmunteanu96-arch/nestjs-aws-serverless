@@ -10,6 +10,7 @@ const environmentSchema = z
     PORT: z.coerce.number().int().min(1).max(65535).default(3000),
     AWS_REGION: z.string().min(1).default('eu-central-1'),
     AUCTIONS_TABLE: z.string().min(1).optional(),
+    SES_SENDER_EMAIL: z.string().default(''),
     CORS_ORIGINS: z.string().default(''),
     API_DOCS_ENABLED: z.stringbool().optional(),
   })

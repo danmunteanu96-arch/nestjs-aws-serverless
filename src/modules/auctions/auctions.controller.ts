@@ -87,6 +87,6 @@ export class AuctionsController {
     @Body() body: PlaceBidDto,
     @CurrentUser() user: AuthenticatedUser,
   ): Promise<AuctionResponseDto> {
-    return this.auctionsService.placeBid(id, body, user.sub);
+    return this.auctionsService.placeBid(id, body, user.sub, user.email);
   }
 }

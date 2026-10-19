@@ -32,7 +32,12 @@ describe('AuctionsController', () => {
       .mockResolvedValue(auction),
     placeBid: jest
       .fn<
-        (id: string, input: PlaceBidDto, bidderId: string) => Promise<typeof auction>
+        (
+          id: string,
+          input: PlaceBidDto,
+          bidderId: string,
+          bidderEmail?: string,
+        ) => Promise<typeof auction>
       >()
       .mockResolvedValue(auction),
   };
@@ -77,12 +82,17 @@ describe('AuctionsController', () => {
 
   it('delegates bid placement to the service with the authenticated bidder', async () => {
     await expect(
-      controller.placeBid('auction-1', { amount: 20 }, { sub: 'bidder-1' }),
+      controller.placeBid(
+        'auction-1',
+        { amount: 20 },
+        { sub: 'bidder-1', email: 'winner@example.com' },
+      ),
     ).resolves.toEqual(auction);
     expect(auctionsService.placeBid).toHaveBeenCalledWith(
       'auction-1',
       { amount: 20 },
       'bidder-1',
+      'winner@example.com',
     );
   });
 

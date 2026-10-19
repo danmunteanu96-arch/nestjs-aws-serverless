@@ -77,3 +77,20 @@ AuctionsTable:
             - createdAt
             - currentBid
             - highestBidderId
+      # v2 of status-endDate-index: GSI projections are immutable, so the index
+      # is versioned instead of modified. Adds highestBidderEmail so the
+      # expiration Lambda can notify winners. Remove v1 once nothing uses it.
+      - IndexName: status-endDate-v2-index
+        KeySchema:
+          - AttributeName: status
+            KeyType: HASH
+          - AttributeName: endDate
+            KeyType: RANGE
+        Projection:
+          ProjectionType: INCLUDE
+          NonKeyAttributes:
+            - title
+            - createdAt
+            - currentBid
+            - highestBidderId
+            - highestBidderEmail
