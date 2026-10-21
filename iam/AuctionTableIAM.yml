@@ -87,6 +87,52 @@ AuctionsExpirationRole:
                         - AuctionsTable
                         - Arn
                     - '/index/status-endDate-v2-index'
+            # The expiration Lambda no longer sends email itself — it hands the
+            # job to SQS. Producer needs exactly one permission: enqueue.
+            - Effect: Allow
+              Action:
+                - sqs:SendMessage
+              Resource:
+                Fn::GetAtt:
+                  - WinnerNotificationsQueue
+                  - Arn
+    Tags:
+      - Key: Project
+        Value: nestjs-aws-serverless
+      - Key: Environment
+        Value: ${sls:stage}
+      - Key: Owner
+        Value: ${env:RESOURCE_OWNER, 'course-team'}
+# Role for the SQS-triggered consumer Lambda: it may drain the notification
+# queue and send the winner email, nothing else.
+WinnerNotificationRole:
+  Type: AWS::IAM::Role
+  Properties:
+    AssumeRolePolicyDocument:
+      Version: '2012-10-17'
+      Statement:
+        - Effect: Allow
+          Principal:
+            Service: lambda.amazonaws.com
+          Action: sts:AssumeRole
+    ManagedPolicyArns:
+      - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+    Policies:
+      - PolicyName: consume-winner-notifications
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            # These three are the minimum an SQS event-source mapping needs:
+            # poll the queue, delete processed messages, read queue config.
+            - Effect: Allow
+              Action:
+                - sqs:ReceiveMessage
+                - sqs:DeleteMessage
+                - sqs:GetQueueAttributes
+              Resource:
+                Fn::GetAtt:
+                  - WinnerNotificationsQueue
+                  - Arn
             # Production-style least privilege: recipients are unknown ahead of
             # time (any user's email), so Resource is '*' and the restriction
             # moves to the controllable part — WHO is allowed to send.

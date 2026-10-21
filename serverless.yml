@@ -45,6 +45,8 @@ provider:
     AUCTIONS_TABLE:
       Ref: AuctionsTable
     SES_SENDER_EMAIL: ${env:SES_SENDER_EMAIL, ''}
+    WINNER_NOTIFICATIONS_QUEUE_URL:
+      Ref: WinnerNotificationsQueue
 
 custom:
   esbuild:
@@ -98,12 +100,32 @@ functions:
       - schedule:
           rate: rate(5 minutes)
           enabled: true
+  sendWinnerNotification:
+    handler: src/winner-notification.handler
+    role:
+      Fn::GetAtt:
+        - WinnerNotificationRole
+        - Arn
+    timeout: 60
+    events:
+      # SQS event source mapping: Lambda polls the queue for us and invokes
+      # this function with batches of messages. Failing invocations are
+      # redelivered by the queue; after 3 failures the message lands in the DLQ.
+      - sqs:
+          arn:
+            Fn::GetAtt:
+              - WinnerNotificationsQueue
+              - Arn
+          batchSize: 10
 
 resources:
   Resources:
     AuctionsTable: ${file(./resources/AuctionTableResource.yml):AuctionsTable}
     AuctionsApiRole: ${file(./iam/AuctionTableIAM.yml):AuctionsApiRole}
     AuctionsExpirationRole: ${file(./iam/AuctionTableIAM.yml):AuctionsExpirationRole}
+    WinnerNotificationRole: ${file(./iam/AuctionTableIAM.yml):WinnerNotificationRole}
+    WinnerNotificationsQueue: ${file(./resources/WinnerNotificationsQueueResource.yml):WinnerNotificationsQueue}
+    WinnerNotificationsDLQ: ${file(./resources/WinnerNotificationsQueueResource.yml):WinnerNotificationsDLQ}
     CognitoUserPool: ${file(./resources/CognitoAuthResource.yml):CognitoUserPool}
     CognitoUserPoolDomain: ${file(./resources/CognitoAuthResource.yml):CognitoUserPoolDomain}
     CognitoUserPoolClient: ${file(./resources/CognitoAuthResource.yml):CognitoUserPoolClient}

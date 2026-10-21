@@ -11,6 +11,7 @@ const environmentSchema = z
     AWS_REGION: z.string().min(1).default('eu-central-1'),
     AUCTIONS_TABLE: z.string().min(1).optional(),
     SES_SENDER_EMAIL: z.string().default(''),
+    WINNER_NOTIFICATIONS_QUEUE_URL: z.string().default(''),
     CORS_ORIGINS: z.string().default(''),
     API_DOCS_ENABLED: z.stringbool().optional(),
   })

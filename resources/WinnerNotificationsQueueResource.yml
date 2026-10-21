@@ -1,0 +1,38 @@
+# Winner-notification queue pair. The main queue buffers "auction won" events
+# between the expiration Lambda (producer) and the notification Lambda
+# (consumer). Messages that fail processing maxReceiveCount times are moved to
+# the DLQ so poison messages stop looping and stay available for inspection.
+WinnerNotificationsQueue:
+  Type: AWS::SQS::Queue
+  Properties:
+    QueueName: ${self:service}-${sls:stage}-winner-notifications
+    # Must be >= the consumer Lambda timeout, otherwise a message can be
+    # redelivered while the previous attempt is still running.
+    VisibilityTimeout: 60
+    RedrivePolicy:
+      maxReceiveCount: 3
+      deadLetterTargetArn:
+        Fn::GetAtt:
+          - WinnerNotificationsDLQ
+          - Arn
+    Tags:
+      - Key: Project
+        Value: nestjs-aws-serverless
+      - Key: Environment
+        Value: ${sls:stage}
+      - Key: Owner
+        Value: ${env:RESOURCE_OWNER, 'course-team'}
+WinnerNotificationsDLQ:
+  Type: AWS::SQS::Queue
+  Properties:
+    QueueName: ${self:service}-${sls:stage}-winner-notifications-dlq
+    # Keep dead letters 14 days (max) so failures can be investigated and
+    # replayed long after the incident.
+    MessageRetentionPeriod: 1209600
+    Tags:
+      - Key: Project
+        Value: nestjs-aws-serverless
+      - Key: Environment
+        Value: ${sls:stage}
+      - Key: Owner
+        Value: ${env:RESOURCE_OWNER, 'course-team'}
