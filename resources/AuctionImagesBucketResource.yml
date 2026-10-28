@@ -1,0 +1,31 @@
+AuctionImagesBucket:
+  Type: AWS::S3::Bucket
+  DeletionPolicy: Retain
+  UpdateReplacePolicy: Retain
+  Properties:
+    # Keeps every auction object private; API responses use short-lived signed URLs.
+    PublicAccessBlockConfiguration:
+      BlockPublicAcls: true
+      BlockPublicPolicy: true
+      IgnorePublicAcls: true
+      RestrictPublicBuckets: true
+    OwnershipControls:
+      Rules:
+        - ObjectOwnership: BucketOwnerEnforced
+    BucketEncryption:
+      ServerSideEncryptionConfiguration:
+        - ServerSideEncryptionByDefault:
+            SSEAlgorithm: AES256
+    LifecycleConfiguration:
+      Rules:
+        - Id: AbortIncompleteUploads
+          Status: Enabled
+          AbortIncompleteMultipartUpload:
+            DaysAfterInitiation: 7
+    Tags:
+      - Key: Project
+        Value: ${self:service}
+      - Key: Environment
+        Value: ${sls:stage}
+      - Key: Owner
+        Value: ${env:RESOURCE_OWNER, 'course-team'}

@@ -44,6 +44,8 @@ provider:
     API_DOCS_ENABLED: ${env:API_DOCS_ENABLED, 'false'}
     AUCTIONS_TABLE:
       Ref: AuctionsTable
+    AUCTION_IMAGES_BUCKET:
+      Ref: AuctionImagesBucket
     SES_SENDER_EMAIL: ${env:SES_SENDER_EMAIL, ''}
     WINNER_NOTIFICATIONS_QUEUE_URL:
       Ref: WinnerNotificationsQueue
@@ -55,8 +57,10 @@ custom:
     keepNames: true
     sourcemap: false
     plugins: plugins.js
+    # Keep Swagger's dynamic absolute-path require available in Lambda.
     external:
       - '@fastify/static'
+      - 'swagger-ui-dist'
     exclude:
       - '@nestjs/microservices'
       - '@nestjs/websockets'
@@ -121,6 +125,7 @@ functions:
 resources:
   Resources:
     AuctionsTable: ${file(./resources/AuctionTableResource.yml):AuctionsTable}
+    AuctionImagesBucket: ${file(./resources/AuctionImagesBucketResource.yml):AuctionImagesBucket}
     AuctionsApiRole: ${file(./iam/AuctionTableIAM.yml):AuctionsApiRole}
     AuctionsExpirationRole: ${file(./iam/AuctionTableIAM.yml):AuctionsExpirationRole}
     WinnerNotificationRole: ${file(./iam/AuctionTableIAM.yml):WinnerNotificationRole}

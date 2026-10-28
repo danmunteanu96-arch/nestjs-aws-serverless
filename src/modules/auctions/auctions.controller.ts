@@ -7,9 +7,15 @@ import {
   Patch,
   Post,
   Query,
+  UploadedFile,
+  UseInterceptors,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import {
+  ApiBadRequestResponse,
   ApiBearerAuth,
+  ApiBody,
+  ApiConsumes,
   ApiCreatedResponse,
   ApiOkResponse,
   ApiOperation,
@@ -56,20 +62,46 @@ export class AuctionsController {
     return this.auctionsService.getById(id);
   }
 
+  // Accepts auction fields and one bounded in-memory image in the same multipart request.
   @Post()
+  @UseInterceptors(
+    FileInterceptor('image', {
+      limits: { fileSize: 5 * 1024 * 1024, files: 1 },
+    }),
+  )
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({
+    schema: {
+      type: 'object',
+      required: ['title', 'status', 'endDate', 'image'],
+      properties: {
+        title: { type: 'string', maxLength: 200 },
+        status: { type: 'string', enum: ['ACTIVE'] },
+        endDate: { type: 'string', format: 'date-time' },
+        image: { type: 'string', format: 'binary' },
+      },
+    },
+  })
   @ApiBearerAuth()
   @ApiCreatedResponse({ type: AuctionResponseDto })
+  @ApiBadRequestResponse({
+    description: 'Validation failed or direct auction closure was requested',
+  })
   @ApiUnauthorizedResponse({ description: 'Missing or invalid JWT' })
   create(
     @Body() body: CreateAuctionDto,
+    @UploadedFile() image: Express.Multer.File | undefined,
     @CurrentUser() user: AuthenticatedUser,
   ): Promise<AuctionResponseDto> {
-    return this.auctionsService.create(body, user.sub);
+    return this.auctionsService.create(body, image, user.sub);
   }
 
   @Patch(':id')
   @ApiParam({ name: 'id', format: 'uuid' })
   @ApiOkResponse({ type: AuctionResponseDto })
+  @ApiBadRequestResponse({
+    description: 'Validation failed or direct auction closure was requested',
+  })
   update(
     @Param('id', new ParseUUIDPipe()) id: string,
     @Body() body: UpdateAuctionDto,

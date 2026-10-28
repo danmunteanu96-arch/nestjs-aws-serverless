@@ -16,8 +16,7 @@ export async function createHttpApplication(): Promise<INestApplication> {
   // Exposes the API Gateway event on req.apiGateway so decorators can read
   // the JWT authorizer claims. Outside Lambda it attaches an empty object.
   app.use(eventContext());
-  const docsEnabled =
-    configService.getOrThrow<string>('API_DOCS_ENABLED') === 'true';
+  const docsEnabled = configService.getOrThrow<boolean>('API_DOCS_ENABLED');
   const helmetOptions = {
     xPoweredBy: false,
     noSniff: true,

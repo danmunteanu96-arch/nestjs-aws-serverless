@@ -19,10 +19,11 @@ import {
 } from '@aws-sdk/client-dynamodb';
 import * as crypto from 'crypto';
 import { AuctionStatus } from './auctions.types';
-import type { Auction } from './auctions.types';
+import type { Auction, AuctionRecord } from './auctions.types';
 import { CreateAuctionDto } from './dto/create-auction.dto';
 import { PlaceBidDto } from './dto/place-bid.dto';
 import { UpdateAuctionDto } from './dto/update-auction.dto';
+import { AuctionImagesService } from './images/auction-images.service';
 
 @Injectable()
 export class AuctionsService {
@@ -31,21 +32,33 @@ export class AuctionsService {
   constructor(
     private readonly dynamoDb: DynamoDBClient,
     private readonly configService: ConfigService,
+    private readonly auctionImages: AuctionImagesService,
   ) {}
 
+  // Uploads first, then persists the key; a failed save triggers best-effort S3 compensation.
   async create(
     validInput: CreateAuctionDto,
+    image: Express.Multer.File | undefined,
     createdBy: string,
   ): Promise<Auction> {
     const tableName = this.configService.getOrThrow<string>('AUCTIONS_TABLE');
-    const auction: Auction = {
-      id: crypto.randomUUID(),
+    // Only expiration may close auctions, so every uploaded image has a cleanup path.
+    if (validInput.status === AuctionStatus.CLOSED) {
+      throw new BadRequestException(
+        'Auctions must be created with ACTIVE status',
+      );
+    }
+    const auctionId = crypto.randomUUID();
+    const imageKey = await this.auctionImages.upload(auctionId, image);
+    const auction: AuctionRecord = {
+      id: auctionId,
       title: validInput.title,
       status: validInput.status,
       endDate: validInput.endDate,
       createdAt: new Date().toISOString(),
       currentBid: 0,
       createdBy,
+      imageKey,
     };
 
     try {
@@ -61,15 +74,23 @@ export class AuctionsService {
             createdAt: { S: auction.createdAt },
             currentBid: { N: '0' },
             createdBy: { S: createdBy },
+            imageKey: { S: imageKey },
           },
         }),
       );
     } catch {
+      try {
+        await this.auctionImages.removeByAuctionId(auctionId);
+      } catch {
+        this.logger.error(
+          `Failed to clean up image for auction ${auctionId} after creation failure`,
+        );
+      }
       this.logger.error('Failed to create auction in DynamoDB');
       throw new InternalServerErrorException('Failed to create auction');
     }
 
-    return auction;
+    return this.toAuctionResponse(auction);
   }
 
   async getAll(status?: AuctionStatus): Promise<Auction[]> {
@@ -101,7 +122,7 @@ export class AuctionsService {
           );
 
           for (const item of result.Items ?? []) {
-            auctions.push(this.toAuction(item));
+            auctions.push(await this.toAuction(item));
           }
 
           exclusiveStartKey = result.LastEvaluatedKey;
@@ -146,7 +167,7 @@ export class AuctionsService {
         );
 
         for (const item of result.Items ?? []) {
-          auctions.push(this.toAuction(item));
+          auctions.push(await this.toAuction(item));
         }
 
         exclusiveStartKey = result.LastEvaluatedKey;
@@ -195,6 +216,12 @@ export class AuctionsService {
     if (Object.keys(validInput).length === 0) {
       throw new BadRequestException(
         'Provide title, status, or endDate to update',
+      );
+    }
+    // Prevent direct closes from bypassing expiration's image cleanup and notification flow.
+    if (validInput.status === AuctionStatus.CLOSED) {
+      throw new BadRequestException(
+        'Auctions are closed automatically after their end date',
       );
     }
 
@@ -347,7 +374,10 @@ export class AuctionsService {
     }
   }
 
-  private toAuction(item: Record<string, AttributeValue>): Auction {
+  // Converts DynamoDB attributes into an internal record before public response mapping.
+  private async toAuction(
+    item: Record<string, AttributeValue>,
+  ): Promise<Auction> {
     const id = item.id?.S;
     const title = item.title?.S;
     const status = item.status?.S;
@@ -360,6 +390,7 @@ export class AuctionsService {
       (bidder): bidder is string => typeof bidder === 'string',
     );
     const endDate = item.endDate?.S;
+    const imageKey = item.imageKey?.S;
     const isValidStatus =
       status === AuctionStatus.ACTIVE || status === AuctionStatus.CLOSED;
 
@@ -377,7 +408,7 @@ export class AuctionsService {
       throw new InternalServerErrorException('Failed to read auction data');
     }
 
-    return {
+    return this.toAuctionResponse({
       id,
       title,
       status,
@@ -387,6 +418,20 @@ export class AuctionsService {
       ...(highestBidderId ? { highestBidderId } : {}),
       ...(createdBy ? { createdBy } : {}),
       ...(bidders && bidders.length > 0 ? { bidders } : {}),
+      ...(imageKey ? { imageKey } : {}),
+    });
+  }
+
+  // Removes persistence-only keys and signs images only while their auction is active.
+  private async toAuctionResponse(record: AuctionRecord): Promise<Auction> {
+    const { imageKey, ...auction } = record;
+    if (record.status !== AuctionStatus.ACTIVE || !imageKey) {
+      return auction;
+    }
+
+    return {
+      ...auction,
+      imageUrl: await this.auctionImages.createReadUrl(imageKey),
     };
   }
 }

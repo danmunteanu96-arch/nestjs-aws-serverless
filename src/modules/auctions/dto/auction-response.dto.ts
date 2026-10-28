@@ -25,4 +25,9 @@ export class AuctionResponseDto {
 
   @ApiPropertyOptional({ description: 'Cognito sub of the auction creator' })
   createdBy?: string;
+
+  @ApiPropertyOptional({
+    description: 'Temporary five-minute URL for the active auction image',
+  })
+  imageUrl?: string;
 }

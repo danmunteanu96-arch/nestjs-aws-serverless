@@ -15,6 +15,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { AuctionsService } from './auctions.service';
 import { AuctionStatus } from './auctions.types';
+import { AuctionImagesService } from './images/auction-images.service';
 
 describe('AuctionsService', () => {
   const dynamoDb = {
@@ -22,24 +23,46 @@ describe('AuctionsService', () => {
       .fn<(...args: unknown[]) => Promise<unknown>>()
       .mockResolvedValue({}),
   };
+  const image = {
+    originalname: 'camera.jpg',
+    buffer: Buffer.from('image'),
+  } as Express.Multer.File;
+  const images = {
+    upload: jest
+      .fn<(auctionId: string, file: Express.Multer.File) => Promise<string>>()
+      .mockImplementation((auctionId) =>
+        Promise.resolve(`auctions/${auctionId}/image`),
+      ),
+    createReadUrl: jest
+      .fn<(imageKey: string) => Promise<string>>()
+      .mockImplementation((imageKey) =>
+        Promise.resolve(`https://signed.test/${imageKey}`),
+      ),
+    removeByAuctionId: jest
+      .fn<(auctionId: string) => Promise<void>>()
+      .mockResolvedValue(undefined),
+  };
   const service = new AuctionsService(
     dynamoDb as unknown as DynamoDBClient,
     new ConfigService({ AUCTIONS_TABLE: 'test-auctions' }),
+    images as unknown as AuctionImagesService,
   );
   beforeEach(() => {
-    dynamoDb.send.mockClear();
+    jest.clearAllMocks();
   });
 
-  it('persists a new auction and returns it', async () => {
+  it('uploads and persists a new auction without exposing its image key', async () => {
     const auction = await service.create(
       {
         title: 'Vintage camera',
         status: 'ACTIVE',
         endDate: '2026-10-20T10:00:00.000Z',
       },
+      image,
       'user-1',
     );
 
+    expect(images.upload).toHaveBeenCalledWith(auction.id, image);
     expect(dynamoDb.send).toHaveBeenCalledWith(expect.any(PutItemCommand));
     const command = dynamoDb.send.mock.calls[0][0] as PutItemCommand;
     expect(command.input).toMatchObject({
@@ -53,12 +76,17 @@ describe('AuctionsService', () => {
         createdAt: { S: auction.createdAt },
         currentBid: { N: '0' },
         createdBy: { S: 'user-1' },
+        imageKey: { S: `auctions/${auction.id}/image` },
       },
     });
     expect(new Date(auction.createdAt).toISOString()).toBe(auction.createdAt);
     expect(auction.currentBid).toBe(0);
     expect(auction.endDate).toBe('2026-10-20T10:00:00.000Z');
     expect(auction.createdBy).toBe('user-1');
+    expect(auction.imageUrl).toBe(
+      `https://signed.test/auctions/${auction.id}/image`,
+    );
+    expect(auction).not.toHaveProperty('imageKey');
   });
 
   it('queries active auctions by ending date', async () => {
@@ -220,6 +248,50 @@ describe('AuctionsService', () => {
       TableName: 'test-auctions',
       Key: { id: { S: 'auction-1' } },
     });
+  });
+
+  it('returns a signed URL only for an active auction with an image', async () => {
+    dynamoDb.send.mockResolvedValueOnce({
+      Item: {
+        id: { S: 'auction-1' },
+        title: { S: 'Vintage camera' },
+        status: { S: 'ACTIVE' },
+        createdAt: { S: '2026-10-10T12:00:00.000Z' },
+        currentBid: { N: '25' },
+        imageKey: { S: 'auctions/auction-1/image' },
+      },
+    });
+
+    await expect(service.getById('auction-1')).resolves.toEqual({
+      id: 'auction-1',
+      title: 'Vintage camera',
+      status: 'ACTIVE',
+      createdAt: '2026-10-10T12:00:00.000Z',
+      currentBid: 25,
+      imageUrl: 'https://signed.test/auctions/auction-1/image',
+    });
+    expect(images.createReadUrl).toHaveBeenCalledWith(
+      'auctions/auction-1/image',
+    );
+  });
+
+  it('does not expose or sign the image key of a closed auction', async () => {
+    dynamoDb.send.mockResolvedValueOnce({
+      Item: {
+        id: { S: 'auction-1' },
+        title: { S: 'Vintage camera' },
+        status: { S: 'CLOSED' },
+        createdAt: { S: '2026-10-10T12:00:00.000Z' },
+        currentBid: { N: '25' },
+        imageKey: { S: 'auctions/auction-1/image' },
+      },
+    });
+
+    const auction = await service.getById('auction-1');
+
+    expect(auction).not.toHaveProperty('imageUrl');
+    expect(auction).not.toHaveProperty('imageKey');
+    expect(images.createReadUrl).not.toHaveBeenCalled();
   });
 
   it('throws not found when the auction does not exist', async () => {
@@ -431,11 +503,36 @@ describe('AuctionsService', () => {
     dynamoDb.send.mockRejectedValueOnce(error);
 
     await expect(
-      service.update('missing-auction', { status: 'CLOSED' }),
+      service.update('missing-auction', { status: 'ACTIVE' }),
     ).rejects.toThrow(NotFoundException);
   });
 
-  it('logs DynamoDB errors and throws a safe server error', async () => {
+  // Only the expiration worker may close auctions, preventing unreachable image orphans.
+  it('rejects direct close updates without writing to DynamoDB', async () => {
+    await expect(
+      service.update('auction-1', { status: AuctionStatus.CLOSED }),
+    ).rejects.toThrow(BadRequestException);
+    expect(dynamoDb.send).not.toHaveBeenCalled();
+  });
+
+  // Rejecting a closed create before upload avoids storing an immediately hidden image.
+  it('rejects closed auction creation before uploading or persisting', async () => {
+    await expect(
+      service.create(
+        {
+          title: 'Already closed',
+          status: AuctionStatus.CLOSED,
+          endDate: '2026-10-20T10:00:00.000Z',
+        },
+        image,
+        'user-1',
+      ),
+    ).rejects.toThrow(BadRequestException);
+    expect(images.upload).not.toHaveBeenCalled();
+    expect(dynamoDb.send).not.toHaveBeenCalled();
+  });
+
+  it('compensates the uploaded image when DynamoDB creation fails', async () => {
     dynamoDb.send.mockRejectedValueOnce(
       new Error('AccessDeniedException: sensitive detail'),
     );
@@ -447,8 +544,12 @@ describe('AuctionsService', () => {
           status: 'ACTIVE',
           endDate: '2026-10-20T10:00:00.000Z',
         },
+        image,
         'user-1',
       ),
     ).rejects.toThrow('Failed to create auction');
+
+    const auctionId = images.upload.mock.calls[0][0];
+    expect(images.removeByAuctionId).toHaveBeenCalledWith(auctionId);
   });
 });

@@ -46,6 +46,19 @@ AuctionsApiRole:
                           - AuctionsTable
                           - Arn
                       - '/index/status-endDate-index'
+            # API can upload, sign reads, and compensate failed creates only under auctions/.
+            - Effect: Allow
+              Action:
+                - s3:PutObject
+                - s3:GetObject
+                - s3:DeleteObject
+              Resource:
+                Fn::Join:
+                  - ''
+                  - - Fn::GetAtt:
+                        - AuctionImagesBucket
+                        - Arn
+                    - '/auctions/*'
     Tags:
       - Key: Project
         Value: nestjs-aws-serverless
@@ -96,6 +109,17 @@ AuctionsExpirationRole:
                 Fn::GetAtt:
                   - WinnerNotificationsQueue
                   - Arn
+            # Expiration deletes only the closed auction's deterministic S3 object.
+            - Effect: Allow
+              Action:
+                - s3:DeleteObject
+              Resource:
+                Fn::Join:
+                  - ''
+                  - - Fn::GetAtt:
+                        - AuctionImagesBucket
+                        - Arn
+                    - '/auctions/*'
     Tags:
       - Key: Project
         Value: nestjs-aws-serverless

@@ -26,12 +26,15 @@ src/
 - `GET /health`: cheap liveness check; does not depend on DynamoDB.
 - `GET /auctions`: active and closed auctions, including `endDate`; optional `?status=ACTIVE` or `?status=CLOSED` filters by status (case-insensitive).
 - `GET /auctions/active`: active auctions ordered by `endDate`.
-- `GET /auctions/:id`, `POST /auctions`, `PATCH /auctions/:id`, `POST /auctions/:id/bids`.
+- `POST /auctions` accepts `multipart/form-data`: text fields `title`, `status`, `endDate`, plus a required `image` file. JPEG, PNG and WebP are detected from file bytes; the limit is 5 MiB. Do not set `Content-Type` manually because the client must generate the multipart boundary. Other mutation routes remain JSON.
+- `POST /auctions` stores the image in a private S3 bucket and only its internal key in DynamoDB. Responses for active auctions include an `imageUrl` signed for five minutes; closed auctions have no `imageUrl`, and no response exposes `imageKey`.
+- If the DynamoDB create fails after upload, the service makes a best-effort compensating S3 delete. Expiration removes `imageKey` atomically with the close update, then deletes the S3 object best-effort before queueing the winner notification. A persistent S3 outage can therefore leave a private orphan object; it never blocks auction closure or notifications and needs operational cleanup if deletion errors appear in logs.
+- `GET /auctions/:id`, `PATCH /auctions/:id`, `POST /auctions/:id/bids` retain their existing contracts. Creating an auction directly as `CLOSED`, or patching it directly to `CLOSED`, returns 400: only the expiration workflow may close auctions, so image cleanup and winner notifications cannot be bypassed.
 - `GET` routes are public; `POST`/`PATCH` routes require a Cognito JWT (see Authentication below).
 - Identity comes from the JWT, never from the request body: `POST /auctions` stamps `createdBy` with the caller's `sub`, and `POST /auctions/:id/bids` takes only `amount` in the body — the bidder is the caller's `sub`. The creator cannot bid on their own auction (403), each user can bid only once per auction (409), and bids must beat the current bid (409). These rules are enforced atomically through the DynamoDB `ConditionExpression`, not just in application code.
 - There are no `/auth/register` or `/auth/login` routes: registration and login go directly to Cognito (Hosted UI or the Cognito API), so no public `POST` endpoints are needed on this API.
 - `GET /docs` and `/docs-json` are enabled outside production by default. Set `API_DOCS_ENABLED=true` to enable them explicitly in production.
-- Bodies use runtime DTO validation, transformation, unknown-field rejection and a 1 MiB limit. IDs must be UUIDs.
+- Bodies use runtime DTO validation, transformation and unknown-field rejection. JSON/urlencoded bodies have a 1 MiB limit; the multipart auction image has a separate 5 MiB limit. IDs must be UUIDs.
 - Errors use `{ statusCode, message, path, requestId }`. Unexpected 500 responses do not expose provider messages. `x-request-id` is validated or generated and returned in responses/logs.
 - CORS is closed unless comma-separated origins are supplied in `CORS_ORIGINS`. No credentials are enabled.
 
@@ -53,9 +56,9 @@ The existing `status-endDate-index` supports active lists, all-status lists and 
 
 ## Configuration
 
-`ConfigModule` validates configuration once at startup and caches values. `AUCTIONS_TABLE` is required except in tests, `AWS_REGION` defaults to `eu-central-1`, and `PORT` defaults to `3000`. See `.env.example`. AWS credentials use the standard SDK credential chain; never put credentials in `.env.example`.
+`ConfigModule` validates configuration once at startup and caches values. `AUCTIONS_TABLE` and `AUCTION_IMAGES_BUCKET` are required except in tests, `AWS_REGION` defaults to `eu-central-1`, and `PORT` defaults to `3000`. See `.env.example`. AWS credentials use the standard SDK credential chain; never put credentials in `.env.example`.
 
-The shared DynamoDB client uses three bounded SDK attempts. API and expiration functions have separate IAM roles. The expiration role can query only the deadline index and update the table. CloudWatch log retention is 14 days, Lambda defaults to ARM64, and resources are tagged with project, stage and owner.
+The shared DynamoDB client uses three bounded SDK attempts. API and expiration functions have separate IAM roles. The API can write/read/delete only `auctions/*` objects in the image bucket; expiration can only delete those objects in addition to its DynamoDB and queue permissions. CloudWatch log retention is 14 days, Lambda defaults to ARM64, and resources are tagged with project, stage and owner.
 
 ## Operations and Costs
 

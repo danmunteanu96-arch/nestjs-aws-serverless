@@ -57,6 +57,13 @@
         "API_DOCS_ENABLED": "true",
         "AUCTIONS_TABLE": {
           "Ref": "AuctionsTable"
+        },
+        "AUCTION_IMAGES_BUCKET": {
+          "Ref": "AuctionImagesBucket"
+        },
+        "SES_SENDER_EMAIL": "danmunteanu96@gmail.com",
+        "WINNER_NOTIFICATIONS_QUEUE_URL": {
+          "Ref": "WinnerNotificationsQueue"
         }
       },
       "versionFunctions": true,
@@ -147,6 +154,13 @@
               "RetentionInDays": 14
             }
           },
+          "SendWinnerNotificationLogGroup": {
+            "Type": "AWS::Logs::LogGroup",
+            "Properties": {
+              "LogGroupName": "/aws/lambda/nestjs-aws-serverless-dev-sendWinnerNotification",
+              "RetentionInDays": 14
+            }
+          },
           "ApiLambdaFunction": {
             "Type": "AWS::Lambda::Function",
             "Properties": {
@@ -154,7 +168,7 @@
                 "S3Bucket": {
                   "Ref": "ServerlessDeploymentBucket"
                 },
-                "S3Key": "serverless/nestjs-aws-serverless/dev/1792225161362-2026-10-17T08:19:21.362Z/nestjs-aws-serverless.zip"
+                "S3Key": "serverless/nestjs-aws-serverless/dev/1793201863236-2026-10-28T15:37:43.236Z/nestjs-aws-serverless.zip"
               },
               "Handler": "src/lambda.handler",
               "Runtime": "nodejs24.x",
@@ -185,6 +199,13 @@
                   "API_DOCS_ENABLED": "true",
                   "AUCTIONS_TABLE": {
                     "$ref": "$[\"service\"][\"provider\"][\"environment\"][\"AUCTIONS_TABLE\"]"
+                  },
+                  "AUCTION_IMAGES_BUCKET": {
+                    "$ref": "$[\"service\"][\"provider\"][\"environment\"][\"AUCTION_IMAGES_BUCKET\"]"
+                  },
+                  "SES_SENDER_EMAIL": "danmunteanu96@gmail.com",
+                  "WINNER_NOTIFICATIONS_QUEUE_URL": {
+                    "$ref": "$[\"service\"][\"provider\"][\"environment\"][\"WINNER_NOTIFICATIONS_QUEUE_URL\"]"
                   }
                 }
               },
@@ -207,7 +228,7 @@
                 "S3Bucket": {
                   "Ref": "ServerlessDeploymentBucket"
                 },
-                "S3Key": "serverless/nestjs-aws-serverless/dev/1792225161362-2026-10-17T08:19:21.362Z/nestjs-aws-serverless.zip"
+                "S3Key": "serverless/nestjs-aws-serverless/dev/1793201863236-2026-10-28T15:37:43.236Z/nestjs-aws-serverless.zip"
               },
               "Handler": "src/auction-expiration.handler",
               "Runtime": "nodejs24.x",
@@ -238,6 +259,13 @@
                   "API_DOCS_ENABLED": "true",
                   "AUCTIONS_TABLE": {
                     "$ref": "$[\"service\"][\"provider\"][\"environment\"][\"AUCTIONS_TABLE\"]"
+                  },
+                  "AUCTION_IMAGES_BUCKET": {
+                    "$ref": "$[\"service\"][\"provider\"][\"environment\"][\"AUCTION_IMAGES_BUCKET\"]"
+                  },
+                  "SES_SENDER_EMAIL": "danmunteanu96@gmail.com",
+                  "WINNER_NOTIFICATIONS_QUEUE_URL": {
+                    "$ref": "$[\"service\"][\"provider\"][\"environment\"][\"WINNER_NOTIFICATIONS_QUEUE_URL\"]"
                   }
                 }
               },
@@ -253,24 +281,94 @@
               "AuctionsExpirationRole"
             ]
           },
-          "ApiLambdaVersionA9VCekL19HYl5hez5vzD5CNwVwhzhPmE2fEJZ0kKkWo": {
+          "SendWinnerNotificationLambdaFunction": {
+            "Type": "AWS::Lambda::Function",
+            "Properties": {
+              "Code": {
+                "S3Bucket": {
+                  "Ref": "ServerlessDeploymentBucket"
+                },
+                "S3Key": "serverless/nestjs-aws-serverless/dev/1793201863236-2026-10-28T15:37:43.236Z/nestjs-aws-serverless.zip"
+              },
+              "Handler": "src/winner-notification.handler",
+              "Runtime": "nodejs24.x",
+              "FunctionName": "nestjs-aws-serverless-dev-sendWinnerNotification",
+              "MemorySize": 256,
+              "Timeout": 60,
+              "Architectures": [
+                "arm64"
+              ],
+              "Tags": [
+                {
+                  "Key": "Project",
+                  "Value": "nestjs-aws-serverless"
+                },
+                {
+                  "Key": "Environment",
+                  "Value": "dev"
+                },
+                {
+                  "Key": "Owner",
+                  "Value": "course-team"
+                }
+              ],
+              "Environment": {
+                "Variables": {
+                  "NODE_ENV": "production",
+                  "CORS_ORIGINS": "http://localhost:3000",
+                  "API_DOCS_ENABLED": "true",
+                  "AUCTIONS_TABLE": {
+                    "$ref": "$[\"service\"][\"provider\"][\"environment\"][\"AUCTIONS_TABLE\"]"
+                  },
+                  "AUCTION_IMAGES_BUCKET": {
+                    "$ref": "$[\"service\"][\"provider\"][\"environment\"][\"AUCTION_IMAGES_BUCKET\"]"
+                  },
+                  "SES_SENDER_EMAIL": "danmunteanu96@gmail.com",
+                  "WINNER_NOTIFICATIONS_QUEUE_URL": {
+                    "$ref": "$[\"service\"][\"provider\"][\"environment\"][\"WINNER_NOTIFICATIONS_QUEUE_URL\"]"
+                  }
+                }
+              },
+              "Role": {
+                "Fn::GetAtt": [
+                  "WinnerNotificationRole",
+                  "Arn"
+                ]
+              }
+            },
+            "DependsOn": [
+              "SendWinnerNotificationLogGroup",
+              "WinnerNotificationRole"
+            ]
+          },
+          "ApiLambdaVersionVjobH9gXwWv8LLWHJRNiFpkDMFVWraeFMb6giMQ75Fo": {
             "Type": "AWS::Lambda::Version",
             "DeletionPolicy": "Retain",
             "Properties": {
               "FunctionName": {
                 "Ref": "ApiLambdaFunction"
               },
-              "CodeSha256": "vVnNp1a30YIsB6Gp3+jwrql6kcUyJ7tMFpQp74ZTkuQ="
+              "CodeSha256": "RuNqkkrSkhOIev8i95PZJO3h+TR8TVM/tS4wAoU/bQU="
             }
           },
-          "CloseExpiredAuctionsLambdaVersiontG2lXxKUvKyWHRWedKeXMNuVRimRQZJr6C5YZ5JT6U": {
+          "CloseExpiredAuctionsLambdaVersionAzvoPrBGositXAK7DNfRCXq9Bj5TLrGuZLvY0DPETM": {
             "Type": "AWS::Lambda::Version",
             "DeletionPolicy": "Retain",
             "Properties": {
               "FunctionName": {
                 "Ref": "CloseExpiredAuctionsLambdaFunction"
               },
-              "CodeSha256": "vVnNp1a30YIsB6Gp3+jwrql6kcUyJ7tMFpQp74ZTkuQ="
+              "CodeSha256": "RuNqkkrSkhOIev8i95PZJO3h+TR8TVM/tS4wAoU/bQU="
+            }
+          },
+          "SendWinnerNotificationLambdaVersionWkc3WG9uIuvtQjmDZ1SwZzaGF8upe8ZU0X7meT1Es8": {
+            "Type": "AWS::Lambda::Version",
+            "DeletionPolicy": "Retain",
+            "Properties": {
+              "FunctionName": {
+                "Ref": "SendWinnerNotificationLambdaFunction"
+              },
+              "CodeSha256": "RuNqkkrSkhOIev8i95PZJO3h+TR8TVM/tS4wAoU/bQU="
             }
           },
           "CloseExpiredAuctionsEventsRuleSchedule1": {
@@ -308,6 +406,28 @@
                   "Arn"
                 ]
               }
+            }
+          },
+          "SendWinnerNotificationEventSourceMappingSQSWinnerNotificationsQueue": {
+            "Type": "AWS::Lambda::EventSourceMapping",
+            "DependsOn": [
+              "WinnerNotificationRole"
+            ],
+            "Properties": {
+              "BatchSize": 10,
+              "EventSourceArn": {
+                "Fn::GetAtt": [
+                  "WinnerNotificationsQueue",
+                  "Arn"
+                ]
+              },
+              "FunctionName": {
+                "Fn::GetAtt": [
+                  "SendWinnerNotificationLambdaFunction",
+                  "Arn"
+                ]
+              },
+              "Enabled": true
             }
           },
           "HttpApi": {
@@ -641,7 +761,7 @@
                   }
                 },
                 {
-                  "IndexName": "status-endDate-index",
+                  "IndexName": "status-endDate-v2-index",
                   "KeySchema": [
                     {
                       "AttributeName": "status",
@@ -658,9 +778,64 @@
                       "title",
                       "createdAt",
                       "currentBid",
-                      "highestBidderId"
+                      "highestBidderId",
+                      "highestBidderEmail"
                     ]
                   }
+                }
+              ]
+            }
+          },
+          "AuctionImagesBucket": {
+            "Type": "AWS::S3::Bucket",
+            "DeletionPolicy": "Retain",
+            "UpdateReplacePolicy": "Retain",
+            "Properties": {
+              "PublicAccessBlockConfiguration": {
+                "BlockPublicAcls": true,
+                "BlockPublicPolicy": true,
+                "IgnorePublicAcls": true,
+                "RestrictPublicBuckets": true
+              },
+              "OwnershipControls": {
+                "Rules": [
+                  {
+                    "ObjectOwnership": "BucketOwnerEnforced"
+                  }
+                ]
+              },
+              "BucketEncryption": {
+                "ServerSideEncryptionConfiguration": [
+                  {
+                    "ServerSideEncryptionByDefault": {
+                      "SSEAlgorithm": "AES256"
+                    }
+                  }
+                ]
+              },
+              "LifecycleConfiguration": {
+                "Rules": [
+                  {
+                    "Id": "AbortIncompleteUploads",
+                    "Status": "Enabled",
+                    "AbortIncompleteMultipartUpload": {
+                      "DaysAfterInitiation": 7
+                    }
+                  }
+                ]
+              },
+              "Tags": [
+                {
+                  "Key": "Project",
+                  "Value": "nestjs-aws-serverless"
+                },
+                {
+                  "Key": "Environment",
+                  "Value": "dev"
+                },
+                {
+                  "Key": "Owner",
+                  "Value": "course-team"
                 }
               ]
             }
@@ -746,6 +921,28 @@
                             ]
                           }
                         ]
+                      },
+                      {
+                        "Effect": "Allow",
+                        "Action": [
+                          "s3:PutObject",
+                          "s3:GetObject",
+                          "s3:DeleteObject"
+                        ],
+                        "Resource": {
+                          "Fn::Join": [
+                            "",
+                            [
+                              {
+                                "Fn::GetAtt": [
+                                  "AuctionImagesBucket",
+                                  "Arn"
+                                ]
+                              },
+                              "/auctions/*"
+                            ]
+                          ]
+                        }
                       }
                     ]
                   }
@@ -818,7 +1015,39 @@
                                   "Arn"
                                 ]
                               },
-                              "/index/status-endDate-index"
+                              "/index/status-endDate-v2-index"
+                            ]
+                          ]
+                        }
+                      },
+                      {
+                        "Effect": "Allow",
+                        "Action": [
+                          "sqs:SendMessage"
+                        ],
+                        "Resource": {
+                          "Fn::GetAtt": [
+                            "WinnerNotificationsQueue",
+                            "Arn"
+                          ]
+                        }
+                      },
+                      {
+                        "Effect": "Allow",
+                        "Action": [
+                          "s3:DeleteObject"
+                        ],
+                        "Resource": {
+                          "Fn::Join": [
+                            "",
+                            [
+                              {
+                                "Fn::GetAtt": [
+                                  "AuctionImagesBucket",
+                                  "Arn"
+                                ]
+                              },
+                              "/auctions/*"
                             ]
                           ]
                         }
@@ -827,6 +1056,127 @@
                   }
                 }
               ],
+              "Tags": [
+                {
+                  "Key": "Project",
+                  "Value": "nestjs-aws-serverless"
+                },
+                {
+                  "Key": "Environment",
+                  "Value": "dev"
+                },
+                {
+                  "Key": "Owner",
+                  "Value": "course-team"
+                }
+              ]
+            }
+          },
+          "WinnerNotificationRole": {
+            "Type": "AWS::IAM::Role",
+            "Properties": {
+              "AssumeRolePolicyDocument": {
+                "Version": "2012-10-17",
+                "Statement": [
+                  {
+                    "Effect": "Allow",
+                    "Principal": {
+                      "Service": "lambda.amazonaws.com"
+                    },
+                    "Action": "sts:AssumeRole"
+                  }
+                ]
+              },
+              "ManagedPolicyArns": [
+                "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+              ],
+              "Policies": [
+                {
+                  "PolicyName": "consume-winner-notifications",
+                  "PolicyDocument": {
+                    "Version": "2012-10-17",
+                    "Statement": [
+                      {
+                        "Effect": "Allow",
+                        "Action": [
+                          "sqs:ReceiveMessage",
+                          "sqs:DeleteMessage",
+                          "sqs:GetQueueAttributes"
+                        ],
+                        "Resource": {
+                          "Fn::GetAtt": [
+                            "WinnerNotificationsQueue",
+                            "Arn"
+                          ]
+                        }
+                      },
+                      {
+                        "Effect": "Allow",
+                        "Action": [
+                          "ses:SendEmail"
+                        ],
+                        "Resource": "*",
+                        "Condition": {
+                          "StringEquals": {
+                            "ses:FromAddress": "danmunteanu96@gmail.com"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              ],
+              "Tags": [
+                {
+                  "Key": "Project",
+                  "Value": "nestjs-aws-serverless"
+                },
+                {
+                  "Key": "Environment",
+                  "Value": "dev"
+                },
+                {
+                  "Key": "Owner",
+                  "Value": "course-team"
+                }
+              ]
+            }
+          },
+          "WinnerNotificationsQueue": {
+            "Type": "AWS::SQS::Queue",
+            "Properties": {
+              "QueueName": "nestjs-aws-serverless-dev-winner-notifications",
+              "VisibilityTimeout": 60,
+              "RedrivePolicy": {
+                "maxReceiveCount": 3,
+                "deadLetterTargetArn": {
+                  "Fn::GetAtt": [
+                    "WinnerNotificationsDLQ",
+                    "Arn"
+                  ]
+                }
+              },
+              "Tags": [
+                {
+                  "Key": "Project",
+                  "Value": "nestjs-aws-serverless"
+                },
+                {
+                  "Key": "Environment",
+                  "Value": "dev"
+                },
+                {
+                  "Key": "Owner",
+                  "Value": "course-team"
+                }
+              ]
+            }
+          },
+          "WinnerNotificationsDLQ": {
+            "Type": "AWS::SQS::Queue",
+            "Properties": {
+              "QueueName": "nestjs-aws-serverless-dev-winner-notifications-dlq",
+              "MessageRetentionPeriod": 1209600,
               "Tags": [
                 {
                   "Key": "Project",
@@ -939,7 +1289,7 @@
           "ApiLambdaFunctionQualifiedArn": {
             "Description": "Current Lambda function version",
             "Value": {
-              "Ref": "ApiLambdaVersionA9VCekL19HYl5hez5vzD5CNwVwhzhPmE2fEJZ0kKkWo"
+              "Ref": "ApiLambdaVersionVjobH9gXwWv8LLWHJRNiFpkDMFVWraeFMb6giMQ75Fo"
             },
             "Export": {
               "Name": "sls-nestjs-aws-serverless-dev-ApiLambdaFunctionQualifiedArn"
@@ -948,10 +1298,19 @@
           "CloseExpiredAuctionsLambdaFunctionQualifiedArn": {
             "Description": "Current Lambda function version",
             "Value": {
-              "Ref": "CloseExpiredAuctionsLambdaVersiontG2lXxKUvKyWHRWedKeXMNuVRimRQZJr6C5YZ5JT6U"
+              "Ref": "CloseExpiredAuctionsLambdaVersionAzvoPrBGositXAK7DNfRCXq9Bj5TLrGuZLvY0DPETM"
             },
             "Export": {
               "Name": "sls-nestjs-aws-serverless-dev-CloseExpiredAuctionsLambdaFunctionQualifiedArn"
+            }
+          },
+          "SendWinnerNotificationLambdaFunctionQualifiedArn": {
+            "Description": "Current Lambda function version",
+            "Value": {
+              "Ref": "SendWinnerNotificationLambdaVersionWkc3WG9uIuvtQjmDZ1SwZzaGF8upe8ZU0X7meT1Es8"
+            },
+            "Export": {
+              "Name": "sls-nestjs-aws-serverless-dev-SendWinnerNotificationLambdaFunctionQualifiedArn"
             }
           },
           "HttpApiId": {
@@ -1110,7 +1469,8 @@
         "sourcemap": false,
         "plugins": "plugins.js",
         "external": [
-          "@fastify/static"
+          "@fastify/static",
+          "swagger-ui-dist"
         ],
         "exclude": [
           "@nestjs/microservices",
@@ -1179,7 +1539,7 @@
         "timeout": 10,
         "runtime": "nodejs24.x",
         "vpc": {},
-        "versionLogicalId": "ApiLambdaVersionA9VCekL19HYl5hez5vzD5CNwVwhzhPmE2fEJZ0kKkWo"
+        "versionLogicalId": "ApiLambdaVersionVjobH9gXwWv8LLWHJRNiFpkDMFVWraeFMb6giMQ75Fo"
       },
       "closeExpiredAuctions": {
         "handler": "src/auction-expiration.handler",
@@ -1202,7 +1562,33 @@
         "memory": 256,
         "runtime": "nodejs24.x",
         "vpc": {},
-        "versionLogicalId": "CloseExpiredAuctionsLambdaVersiontG2lXxKUvKyWHRWedKeXMNuVRimRQZJr6C5YZ5JT6U"
+        "versionLogicalId": "CloseExpiredAuctionsLambdaVersionAzvoPrBGositXAK7DNfRCXq9Bj5TLrGuZLvY0DPETM"
+      },
+      "sendWinnerNotification": {
+        "handler": "src/winner-notification.handler",
+        "role": {
+          "$ref": "$[\"service\"][\"provider\"][\"compiledCloudFormationTemplate\"][\"Resources\"][\"SendWinnerNotificationLambdaFunction\"][\"Properties\"][\"Role\"]"
+        },
+        "timeout": 60,
+        "events": [
+          {
+            "sqs": {
+              "arn": {
+                "Fn::GetAtt": [
+                  "WinnerNotificationsQueue",
+                  "Arn"
+                ]
+              },
+              "batchSize": 10
+            }
+          }
+        ],
+        "name": "nestjs-aws-serverless-dev-sendWinnerNotification",
+        "package": {},
+        "memory": 256,
+        "runtime": "nodejs24.x",
+        "vpc": {},
+        "versionLogicalId": "SendWinnerNotificationLambdaVersionWkc3WG9uIuvtQjmDZ1SwZzaGF8upe8ZU0X7meT1Es8"
       }
     },
     "resources": {
@@ -1322,7 +1708,7 @@
                 }
               },
               {
-                "IndexName": "status-endDate-index",
+                "IndexName": "status-endDate-v2-index",
                 "KeySchema": [
                   {
                     "AttributeName": "status",
@@ -1339,9 +1725,64 @@
                     "title",
                     "createdAt",
                     "currentBid",
-                    "highestBidderId"
+                    "highestBidderId",
+                    "highestBidderEmail"
                   ]
                 }
+              }
+            ]
+          }
+        },
+        "AuctionImagesBucket": {
+          "Type": "AWS::S3::Bucket",
+          "DeletionPolicy": "Retain",
+          "UpdateReplacePolicy": "Retain",
+          "Properties": {
+            "PublicAccessBlockConfiguration": {
+              "BlockPublicAcls": true,
+              "BlockPublicPolicy": true,
+              "IgnorePublicAcls": true,
+              "RestrictPublicBuckets": true
+            },
+            "OwnershipControls": {
+              "Rules": [
+                {
+                  "ObjectOwnership": "BucketOwnerEnforced"
+                }
+              ]
+            },
+            "BucketEncryption": {
+              "ServerSideEncryptionConfiguration": [
+                {
+                  "ServerSideEncryptionByDefault": {
+                    "SSEAlgorithm": "AES256"
+                  }
+                }
+              ]
+            },
+            "LifecycleConfiguration": {
+              "Rules": [
+                {
+                  "Id": "AbortIncompleteUploads",
+                  "Status": "Enabled",
+                  "AbortIncompleteMultipartUpload": {
+                    "DaysAfterInitiation": 7
+                  }
+                }
+              ]
+            },
+            "Tags": [
+              {
+                "Key": "Project",
+                "Value": "nestjs-aws-serverless"
+              },
+              {
+                "Key": "Environment",
+                "Value": "dev"
+              },
+              {
+                "Key": "Owner",
+                "Value": "course-team"
               }
             ]
           }
@@ -1427,6 +1868,28 @@
                           ]
                         }
                       ]
+                    },
+                    {
+                      "Effect": "Allow",
+                      "Action": [
+                        "s3:PutObject",
+                        "s3:GetObject",
+                        "s3:DeleteObject"
+                      ],
+                      "Resource": {
+                        "Fn::Join": [
+                          "",
+                          [
+                            {
+                              "Fn::GetAtt": [
+                                "AuctionImagesBucket",
+                                "Arn"
+                              ]
+                            },
+                            "/auctions/*"
+                          ]
+                        ]
+                      }
                     }
                   ]
                 }
@@ -1499,7 +1962,39 @@
                                 "Arn"
                               ]
                             },
-                            "/index/status-endDate-index"
+                            "/index/status-endDate-v2-index"
+                          ]
+                        ]
+                      }
+                    },
+                    {
+                      "Effect": "Allow",
+                      "Action": [
+                        "sqs:SendMessage"
+                      ],
+                      "Resource": {
+                        "Fn::GetAtt": [
+                          "WinnerNotificationsQueue",
+                          "Arn"
+                        ]
+                      }
+                    },
+                    {
+                      "Effect": "Allow",
+                      "Action": [
+                        "s3:DeleteObject"
+                      ],
+                      "Resource": {
+                        "Fn::Join": [
+                          "",
+                          [
+                            {
+                              "Fn::GetAtt": [
+                                "AuctionImagesBucket",
+                                "Arn"
+                              ]
+                            },
+                            "/auctions/*"
                           ]
                         ]
                       }
@@ -1508,6 +2003,127 @@
                 }
               }
             ],
+            "Tags": [
+              {
+                "Key": "Project",
+                "Value": "nestjs-aws-serverless"
+              },
+              {
+                "Key": "Environment",
+                "Value": "dev"
+              },
+              {
+                "Key": "Owner",
+                "Value": "course-team"
+              }
+            ]
+          }
+        },
+        "WinnerNotificationRole": {
+          "Type": "AWS::IAM::Role",
+          "Properties": {
+            "AssumeRolePolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Principal": {
+                    "Service": "lambda.amazonaws.com"
+                  },
+                  "Action": "sts:AssumeRole"
+                }
+              ]
+            },
+            "ManagedPolicyArns": [
+              "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+            ],
+            "Policies": [
+              {
+                "PolicyName": "consume-winner-notifications",
+                "PolicyDocument": {
+                  "Version": "2012-10-17",
+                  "Statement": [
+                    {
+                      "Effect": "Allow",
+                      "Action": [
+                        "sqs:ReceiveMessage",
+                        "sqs:DeleteMessage",
+                        "sqs:GetQueueAttributes"
+                      ],
+                      "Resource": {
+                        "Fn::GetAtt": [
+                          "WinnerNotificationsQueue",
+                          "Arn"
+                        ]
+                      }
+                    },
+                    {
+                      "Effect": "Allow",
+                      "Action": [
+                        "ses:SendEmail"
+                      ],
+                      "Resource": "*",
+                      "Condition": {
+                        "StringEquals": {
+                          "ses:FromAddress": "danmunteanu96@gmail.com"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            ],
+            "Tags": [
+              {
+                "Key": "Project",
+                "Value": "nestjs-aws-serverless"
+              },
+              {
+                "Key": "Environment",
+                "Value": "dev"
+              },
+              {
+                "Key": "Owner",
+                "Value": "course-team"
+              }
+            ]
+          }
+        },
+        "WinnerNotificationsQueue": {
+          "Type": "AWS::SQS::Queue",
+          "Properties": {
+            "QueueName": "nestjs-aws-serverless-dev-winner-notifications",
+            "VisibilityTimeout": 60,
+            "RedrivePolicy": {
+              "maxReceiveCount": 3,
+              "deadLetterTargetArn": {
+                "Fn::GetAtt": [
+                  "WinnerNotificationsDLQ",
+                  "Arn"
+                ]
+              }
+            },
+            "Tags": [
+              {
+                "Key": "Project",
+                "Value": "nestjs-aws-serverless"
+              },
+              {
+                "Key": "Environment",
+                "Value": "dev"
+              },
+              {
+                "Key": "Owner",
+                "Value": "course-team"
+              }
+            ]
+          }
+        },
+        "WinnerNotificationsDLQ": {
+          "Type": "AWS::SQS::Queue",
+          "Properties": {
+            "QueueName": "nestjs-aws-serverless-dev-winner-notifications-dlq",
+            "MessageRetentionPeriod": 1209600,
             "Tags": [
               {
                 "Key": "Project",
@@ -1670,7 +2286,7 @@
     "layers": {}
   },
   "package": {
-    "artifactDirectoryName": "serverless/nestjs-aws-serverless/dev/1792225161362-2026-10-17T08:19:21.362Z",
+    "artifactDirectoryName": "serverless/nestjs-aws-serverless/dev/1793201863236-2026-10-28T15:37:43.236Z",
     "artifact": "nestjs-aws-serverless.zip"
   }
 }

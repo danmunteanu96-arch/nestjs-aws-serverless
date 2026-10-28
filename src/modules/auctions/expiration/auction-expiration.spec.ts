@@ -8,10 +8,21 @@ import { describe, expect, it, jest } from '@jest/globals';
 import { ConfigService } from '@nestjs/config';
 import { AuctionStatus } from '../auctions.types';
 import { AuctionExpirationService } from './auction-expiration.service';
+import { AuctionImagesService } from '../images/auction-images.service';
 
 describe('closeExpiredAuctions', () => {
+  const images = {
+    removeByAuctionId: jest
+      .fn<(auctionId: string) => Promise<void>>()
+      .mockResolvedValue(undefined),
+  };
+
+  beforeEach(() => {
+    images.removeByAuctionId.mockReset().mockResolvedValue(undefined);
+  });
   it('queries expired active auctions and conditionally closes them', async () => {
-    const send = jest.fn<(...args: unknown[]) => Promise<unknown>>()
+    const send = jest
+      .fn<(...args: unknown[]) => Promise<unknown>>()
       .mockResolvedValueOnce({
         Items: [
           {
@@ -31,6 +42,7 @@ describe('closeExpiredAuctions', () => {
         WINNER_NOTIFICATIONS_QUEUE_URL: 'https://sqs.test/queue',
       }),
       sqs,
+      images as unknown as AuctionImagesService,
     );
     const now = new Date('2026-10-14T12:00:00.000Z');
 
@@ -50,7 +62,7 @@ describe('closeExpiredAuctions', () => {
     const update = send.mock.calls[1][0] as UpdateItemCommand;
     expect(update.input).toMatchObject({
       Key: { id: { S: 'auction-1' } },
-      UpdateExpression: 'SET #status = :closed',
+      UpdateExpression: 'SET #status = :closed REMOVE #imageKey',
       ConditionExpression:
         'attribute_exists(#id) AND #status = :active AND #endDate <= :now',
       ExpressionAttributeValues: {
@@ -58,10 +70,12 @@ describe('closeExpiredAuctions', () => {
         ':closed': { S: 'CLOSED' },
       },
     });
+    expect(images.removeByAuctionId).toHaveBeenCalledWith('auction-1');
   });
 
   it('enqueues a winner notification when an auction with bids closes', async () => {
-    const send = jest.fn<(...args: unknown[]) => Promise<unknown>>()
+    const send = jest
+      .fn<(...args: unknown[]) => Promise<unknown>>()
       .mockResolvedValueOnce({
         Items: [
           {
@@ -85,6 +99,7 @@ describe('closeExpiredAuctions', () => {
         WINNER_NOTIFICATIONS_QUEUE_URL: 'https://sqs.test/queue',
       }),
       { send: sqsSend } as unknown as SQSClient,
+      images as unknown as AuctionImagesService,
     );
 
     await expect(
@@ -103,7 +118,8 @@ describe('closeExpiredAuctions', () => {
   });
 
   it('does not enqueue when the closed auction has no winner', async () => {
-    const send = jest.fn<(...args: unknown[]) => Promise<unknown>>()
+    const send = jest
+      .fn<(...args: unknown[]) => Promise<unknown>>()
       .mockResolvedValueOnce({
         Items: [
           {
@@ -122,6 +138,7 @@ describe('closeExpiredAuctions', () => {
         WINNER_NOTIFICATIONS_QUEUE_URL: 'https://sqs.test/queue',
       }),
       { send: sqsSend } as unknown as SQSClient,
+      images as unknown as AuctionImagesService,
     );
 
     await expect(
@@ -132,7 +149,8 @@ describe('closeExpiredAuctions', () => {
   });
 
   it('still counts the close when enqueueing the notification fails', async () => {
-    const send = jest.fn<(...args: unknown[]) => Promise<unknown>>()
+    const send = jest
+      .fn<(...args: unknown[]) => Promise<unknown>>()
       .mockResolvedValueOnce({
         Items: [
           {
@@ -156,6 +174,7 @@ describe('closeExpiredAuctions', () => {
         WINNER_NOTIFICATIONS_QUEUE_URL: 'https://sqs.test/queue',
       }),
       { send: sqsSend } as unknown as SQSClient,
+      images as unknown as AuctionImagesService,
     );
 
     await expect(
@@ -164,7 +183,8 @@ describe('closeExpiredAuctions', () => {
   });
 
   it('skips the notification when the queue URL is not configured', async () => {
-    const send = jest.fn<(...args: unknown[]) => Promise<unknown>>()
+    const send = jest
+      .fn<(...args: unknown[]) => Promise<unknown>>()
       .mockResolvedValueOnce({
         Items: [
           {
@@ -186,6 +206,7 @@ describe('closeExpiredAuctions', () => {
         WINNER_NOTIFICATIONS_QUEUE_URL: '',
       }),
       { send: sqsSend } as unknown as SQSClient,
+      images as unknown as AuctionImagesService,
     );
 
     await expect(
@@ -193,5 +214,67 @@ describe('closeExpiredAuctions', () => {
     ).resolves.toBe(1);
 
     expect(sqsSend).not.toHaveBeenCalled();
+  });
+
+  it('does not delete or enqueue when another worker already closed the auction', async () => {
+    const conditionalError = new Error('Already closed');
+    conditionalError.name = 'ConditionalCheckFailedException';
+    const send = jest
+      .fn<(...args: unknown[]) => Promise<unknown>>()
+      .mockResolvedValueOnce({
+        Items: [{ id: { S: 'auction-1' } }],
+      })
+      .mockRejectedValueOnce(conditionalError);
+    const sqsSend = jest.fn<(...args: unknown[]) => Promise<unknown>>();
+    const service = new AuctionExpirationService(
+      { send } as unknown as DynamoDBClient,
+      new ConfigService({
+        AUCTIONS_TABLE: 'test-auctions',
+        WINNER_NOTIFICATIONS_QUEUE_URL: 'https://sqs.test/queue',
+      }),
+      { send: sqsSend } as unknown as SQSClient,
+      images as unknown as AuctionImagesService,
+    );
+
+    await expect(
+      service.closeExpiredAuctions(new Date('2026-10-14T12:00:00.000Z')),
+    ).resolves.toBe(0);
+    expect(images.removeByAuctionId).not.toHaveBeenCalled();
+    expect(sqsSend).not.toHaveBeenCalled();
+  });
+
+  it('still closes and notifies when image deletion fails', async () => {
+    const send = jest
+      .fn<(...args: unknown[]) => Promise<unknown>>()
+      .mockResolvedValueOnce({
+        Items: [
+          {
+            id: { S: 'auction-1' },
+            title: { S: 'Vintage camera' },
+            currentBid: { N: '40' },
+            highestBidderEmail: { S: 'winner@example.com' },
+          },
+        ],
+      })
+      .mockResolvedValueOnce({});
+    const sqsSend = jest
+      .fn<(...args: unknown[]) => Promise<unknown>>()
+      .mockResolvedValue({});
+    images.removeByAuctionId.mockRejectedValueOnce(new Error('S3 unavailable'));
+    const service = new AuctionExpirationService(
+      { send } as unknown as DynamoDBClient,
+      new ConfigService({
+        AUCTIONS_TABLE: 'test-auctions',
+        WINNER_NOTIFICATIONS_QUEUE_URL: 'https://sqs.test/queue',
+      }),
+      { send: sqsSend } as unknown as SQSClient,
+      images as unknown as AuctionImagesService,
+    );
+
+    await expect(
+      service.closeExpiredAuctions(new Date('2026-10-14T12:00:00.000Z')),
+    ).resolves.toBe(1);
+    expect(images.removeByAuctionId).toHaveBeenCalledWith('auction-1');
+    expect(sqsSend).toHaveBeenCalledTimes(1);
   });
 });

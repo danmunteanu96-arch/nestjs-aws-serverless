@@ -10,6 +10,7 @@ const environmentSchema = z
     PORT: z.coerce.number().int().min(1).max(65535).default(3000),
     AWS_REGION: z.string().min(1).default('eu-central-1'),
     AUCTIONS_TABLE: z.string().min(1).optional(),
+    AUCTION_IMAGES_BUCKET: z.string().min(1).optional(),
     SES_SENDER_EMAIL: z.string().default(''),
     WINNER_NOTIFICATIONS_QUEUE_URL: z.string().default(''),
     CORS_ORIGINS: z.string().default(''),
@@ -23,6 +24,9 @@ const environmentSchema = z
     AUCTIONS_TABLE:
       environment.AUCTIONS_TABLE ??
       (environment.NODE_ENV === 'test' ? 'test-auctions' : undefined),
+    AUCTION_IMAGES_BUCKET:
+      environment.AUCTION_IMAGES_BUCKET ??
+      (environment.NODE_ENV === 'test' ? 'test-auction-images' : undefined),
   }))
   .superRefine((environment, context) => {
     if (!environment.AUCTIONS_TABLE) {
@@ -30,6 +34,13 @@ const environmentSchema = z
         code: 'custom',
         path: ['AUCTIONS_TABLE'],
         message: 'AUCTIONS_TABLE is required outside tests',
+      });
+    }
+    if (!environment.AUCTION_IMAGES_BUCKET) {
+      context.addIssue({
+        code: 'custom',
+        path: ['AUCTION_IMAGES_BUCKET'],
+        message: 'AUCTION_IMAGES_BUCKET is required outside tests',
       });
     }
   });

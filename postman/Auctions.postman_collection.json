@@ -1,7 +1,7 @@
 {
   "info": {
     "name": "Serverless Auctions API",
-    "description": "End-to-end auction flow. Run requests in order; wait approximately 5-10 minutes before verifying auto-close.\n\nAuth: mutations (create/update/bid) require a Cognito JWT. There are no /auth/register or /auth/login endpoints in this API — registration and login happen directly against Cognito (Hosted UI or the Cognito API). Set the `accessToken` collection variable with an IdToken from the User Pool: run ./scripts/create-cognito-test-user.sh <email> <password> to create+confirm a user and print a token, or use an existing user (dev test user: testuser@example.com). The bidder/creator identity is taken from the JWT — the bid body only carries `amount`. Business rules: the auction creator cannot bid on their own auction, and each user can bid only once per auction. GET requests stay public.",
+    "description": "End-to-end auction flow. Run requests in order; wait approximately 5-10 minutes before verifying auto-close.\n\nCreate uses Body > form-data: title, status, endDate and a required image file (JPEG, PNG or WebP, maximum 5 MiB). Select a real file in the image row and do not add Content-Type manually; Postman generates the multipart boundary. Open imageUrl while the auction is ACTIVE: it is a temporary S3 URL valid for five minutes. After auto-close, imageUrl is absent and the private S3 object is deleted.\n\nAuth: mutations (create/update/bid) require a Cognito JWT. There are no /auth/register or /auth/login endpoints in this API — registration and login happen directly against Cognito (Hosted UI or the Cognito API). Set the `accessToken` collection variable with an IdToken from the User Pool: run ./scripts/create-cognito-test-user.sh <email> <password> to create+confirm a user and print a token, or use an existing user (dev test user: testuser@example.com). The bidder/creator identity is taken from the JWT — the bid body only carries `amount`. Business rules: the auction creator cannot bid on their own auction, and each user can bid only once per auction. GET requests stay public.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
@@ -49,7 +49,7 @@
       ]
     },
     {
-      "name": "Create auction (ends in 5 minutes)",
+      "name": "Create auction with image (ends in 5 minutes)",
       "event": [
         {
           "listen": "prerequest",
@@ -66,12 +66,14 @@
           "script": {
             "type": "text/javascript",
             "exec": [
-              "pm.test('Auction was created', function () {",
+              "pm.test('Auction was created with a temporary image URL', function () {",
               "  pm.response.to.have.status(201);",
               "  const auction = pm.response.json();",
               "  pm.expect(auction.id).to.be.a('string');",
               "  pm.expect(auction.status).to.eql('ACTIVE');",
               "  pm.expect(auction.endDate).to.eql(pm.collectionVariables.get('endDate'));",
+              "  pm.expect(auction.imageUrl).to.be.a('string');",
+              "  pm.expect(auction).not.to.have.property('imageKey');",
               "  pm.collectionVariables.set('auctionId', auction.id);",
               "});"
             ]
@@ -90,20 +92,31 @@
             }
           ]
         },
-        "header": [
-          {
-            "key": "Content-Type",
-            "value": "application/json"
-          }
-        ],
+        "header": [],
         "body": {
-          "mode": "raw",
-          "raw": "{\n  \"title\": \"Postman test auction\",\n  \"status\": \"ACTIVE\",\n  \"endDate\": \"{{endDate}}\"\n}",
-          "options": {
-            "raw": {
-              "language": "json"
+          "mode": "formdata",
+          "formdata": [
+            {
+              "key": "title",
+              "value": "Postman test auction",
+              "type": "text"
+            },
+            {
+              "key": "status",
+              "value": "ACTIVE",
+              "type": "text"
+            },
+            {
+              "key": "endDate",
+              "value": "{{endDate}}",
+              "type": "text"
+            },
+            {
+              "key": "image",
+              "type": "file",
+              "src": []
             }
-          }
+          ]
         },
         "url": "{{baseUrl}}/auctions"
       }
@@ -120,11 +133,13 @@
           "script": {
             "type": "text/javascript",
             "exec": [
-              "pm.test('Returns the created auction and its end date', function () {",
+              "pm.test('Returns the active auction with a temporary image URL', function () {",
               "  pm.response.to.have.status(200);",
               "  const auction = pm.response.json();",
               "  pm.expect(auction.id).to.eql(pm.collectionVariables.get('auctionId'));",
               "  pm.expect(auction.endDate).to.be.a('string');",
+              "  pm.expect(auction.imageUrl).to.include('https://');",
+              "  pm.expect(auction).not.to.have.property('imageKey');",
               "});"
             ]
           }
@@ -287,10 +302,12 @@
           "script": {
             "type": "text/javascript",
             "exec": [
-              "pm.test('Expired auction was automatically closed', function () {",
+              "pm.test('Expired auction was closed and its image URL was removed', function () {",
               "  pm.response.to.have.status(200);",
               "  const auction = pm.response.json();",
               "  pm.expect(auction.status).to.eql('CLOSED');",
+              "  pm.expect(auction).not.to.have.property('imageUrl');",
+              "  pm.expect(auction).not.to.have.property('imageKey');",
               "});"
             ]
           }

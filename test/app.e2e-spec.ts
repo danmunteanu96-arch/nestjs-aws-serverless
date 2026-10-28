@@ -5,6 +5,11 @@ import type { NextFunction, Request, Response } from 'express';
 import { createHttpApplication } from './../src/http/create-http-application';
 import type { RequestWithApiGateway } from './../src/common/decorators/current-user.decorator';
 
+// Provides real PNG magic bytes for multipart tests without reading a fixture file.
+const validPng = Buffer.from([
+  0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00,
+]);
+
 // Simulates the claims the API Gateway JWT authorizer injects on real requests,
 // so validation/pipeline behaviour can be exercised locally.
 const fakeGatewayClaims = (
@@ -80,6 +85,57 @@ describe('HTTP API (e2e)', () => {
         expect(body.statusCode).toBe(400);
         expect(body.requestId).toBe(headers['x-request-id']);
       });
+  });
+
+  it('validates DTO fields sent through multipart form data', () => {
+    return request(app.getHttpServer())
+      .post('/auctions')
+      .field('title', 'Missing deadline')
+      .field('status', 'ACTIVE')
+      .attach('image', validPng, {
+        filename: 'pixel.png',
+        contentType: 'image/png',
+      })
+      .expect(400);
+  });
+
+  it('rejects a valid multipart auction without its required image', () => {
+    return request(app.getHttpServer())
+      .post('/auctions')
+      .field('title', 'Missing image')
+      .field('status', 'ACTIVE')
+      .field('endDate', '2030-01-01T00:00:00.000Z')
+      .expect(400)
+      .expect(({ body }) => {
+        expect(body.message).toMatch(/image/i);
+      });
+  });
+
+  it('rejects unknown multipart fields before persistence', () => {
+    return request(app.getHttpServer())
+      .post('/auctions')
+      .field('title', 'Unknown field')
+      .field('status', 'ACTIVE')
+      .field('endDate', '2030-01-01T00:00:00.000Z')
+      .field('createdBy', 'untrusted-user')
+      .attach('image', validPng, {
+        filename: 'pixel.png',
+        contentType: 'image/png',
+      })
+      .expect(400);
+  });
+
+  it('rejects images larger than five MiB before persistence', () => {
+    return request(app.getHttpServer())
+      .post('/auctions')
+      .field('title', 'Oversized image')
+      .field('status', 'ACTIVE')
+      .field('endDate', '2030-01-01T00:00:00.000Z')
+      .attach('image', Buffer.alloc(5 * 1024 * 1024 + 1), {
+        filename: 'oversized.jpg',
+        contentType: 'image/jpeg',
+      })
+      .expect(413);
   });
 
   it('rejects mutations without API Gateway JWT claims', async () => {

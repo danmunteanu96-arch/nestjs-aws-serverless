@@ -18,7 +18,7 @@ npm ci
 
 On Windows with nvm-windows, run `nvm install 24.15.0` and `nvm use 24.15.0`; that tool does not automatically read `.nvmrc`.
 
-For local HTTP development, copy `.env.example` to `.env` and set `AUCTIONS_TABLE` to a table you can access. Never put AWS credentials in `.env`.
+For local HTTP development, copy `.env.example` to `.env` and set `AUCTIONS_TABLE` and `AUCTION_IMAGES_BUCKET` to resources you can access. Never put AWS credentials in `.env`.
 
 ```bash
 npm run start:dev
@@ -34,7 +34,7 @@ The local API listens on `PORT` (default `3000`). Routes are documented at `/doc
 
 Auction routes: `GET /auctions`, `GET /auctions/active`, `GET /auctions/:id`, `POST /auctions`, `PATCH /auctions/:id`, and `POST /auctions/:id/bids`.
 
-New auctions require an ISO 8601 `endDate`. Active auctions are closed by an EventBridge-triggered Lambda every five minutes. See [docs/architecture.md](docs/architecture.md) and import [postman/Auctions.postman_collection.json](postman/Auctions.postman_collection.json) for details.
+New auctions require `multipart/form-data` with `title`, `status`, an ISO 8601 `endDate`, and an `image` file (JPEG, PNG or WebP, maximum 5 MiB). Let the client generate the multipart `Content-Type` header. Active auction responses contain a private S3 `imageUrl` valid for five minutes. Active auctions are closed by an EventBridge-triggered Lambda every five minutes; closing removes the image and its URL. See [docs/architecture.md](docs/architecture.md) and import [postman/Auctions.postman_collection.json](postman/Auctions.postman_collection.json) for details.
 
 ## Deployment
 

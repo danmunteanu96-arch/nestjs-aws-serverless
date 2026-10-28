@@ -9,6 +9,7 @@ import { SendMessageCommand, SQSClient } from '@aws-sdk/client-sqs';
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AuctionStatus } from '../auctions.types';
+import { AuctionImagesService } from '../images/auction-images.service';
 
 @Injectable()
 export class AuctionExpirationService {
@@ -18,6 +19,7 @@ export class AuctionExpirationService {
     private readonly dynamoDb: DynamoDBClient,
     private readonly configService: ConfigService,
     private readonly sqs: SQSClient,
+    private readonly auctionImages: AuctionImagesService,
   ) {}
 
   async closeExpiredAuctions(now: Date = new Date()): Promise<number> {
@@ -57,6 +59,10 @@ export class AuctionExpirationService {
                 expirationTime,
               );
               if (closed) {
+                const auctionId = auction.id?.S;
+                if (auctionId) {
+                  await this.removeAuctionImage(auctionId);
+                }
                 await this.enqueueWinnerNotification(auction);
               }
               return closed;
@@ -91,13 +97,14 @@ export class AuctionExpirationService {
         new UpdateItemCommand({
           TableName: tableName,
           Key: { id: { S: id } },
-          UpdateExpression: 'SET #status = :closed',
+          UpdateExpression: 'SET #status = :closed REMOVE #imageKey',
           ConditionExpression:
             'attribute_exists(#id) AND #status = :active AND #endDate <= :now',
           ExpressionAttributeNames: {
             '#id': 'id',
             '#status': 'status',
             '#endDate': 'endDate',
+            '#imageKey': 'imageKey',
           },
           ExpressionAttributeValues: {
             ':active': { S: AuctionStatus.ACTIVE },
@@ -116,6 +123,18 @@ export class AuctionExpirationService {
         return false;
       }
       throw error;
+    }
+  }
+
+  // Best-effort cleanup keeps a private orphan visible in logs without reversing the close.
+  private async removeAuctionImage(auctionId: string): Promise<void> {
+    try {
+      await this.auctionImages.removeByAuctionId(auctionId);
+    } catch (error: unknown) {
+      this.logger.error(
+        `Failed to delete image for closed auction ${auctionId}`,
+        error instanceof Error ? error.stack : undefined,
+      );
     }
   }
 

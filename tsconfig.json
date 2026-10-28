@@ -12,7 +12,8 @@
     "experimentalDecorators": true,
     "allowSyntheticDefaultImports": true,
     "target": "ES2023",
-    "types": ["node", "jest"],
+    // Load Multer's Express.Multer.File declarations for multipart handlers.
+    "types": ["node", "jest", "multer"],
     "sourceMap": true,
     "outDir": "./dist",
     "incremental": true,

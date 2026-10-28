@@ -20,4 +20,9 @@ export interface Auction extends Omit<CreateAuctionInput, 'endDate'> {
   highestBidderEmail?: string;
   createdBy?: string;
   bidders?: string[];
+  imageUrl?: string;
+}
+
+export interface AuctionRecord extends Auction {
+  imageKey?: string;
 }

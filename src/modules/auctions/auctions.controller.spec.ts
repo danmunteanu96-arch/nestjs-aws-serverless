@@ -16,7 +16,13 @@ describe('AuctionsController', () => {
   };
   const auctionsService = {
     create: jest
-      .fn<(input: CreateAuctionDto, createdBy: string) => Promise<typeof auction>>()
+      .fn<
+        (
+          input: CreateAuctionDto,
+          image: Express.Multer.File,
+          createdBy: string,
+        ) => Promise<typeof auction>
+      >()
       .mockResolvedValue(auction),
     getAll: jest
       .fn<(status?: AuctionStatus) => Promise<(typeof auction)[]>>()
@@ -96,24 +102,21 @@ describe('AuctionsController', () => {
     );
   });
 
-  it('delegates valid auction data to the service with the authenticated creator', async () => {
+  it('delegates valid auction data and its image with the authenticated creator', async () => {
+    const image = {
+      originalname: 'camera.jpg',
+      buffer: Buffer.from('image'),
+    } as Express.Multer.File;
+    // Match the DTO's enum type so this fixture tests delegation, not TypeScript coercion.
+    const input = {
+      title: 'Vintage camera',
+      status: AuctionStatus.ACTIVE,
+      endDate: '2026-10-20T12:00:00+02:00',
+    };
+
     await expect(
-      controller.create(
-        {
-          title: 'Vintage camera',
-          status: 'ACTIVE',
-          endDate: '2026-10-20T12:00:00+02:00',
-        },
-        { sub: 'user-1' },
-      ),
+      controller.create(input, image, { sub: 'user-1' }),
     ).resolves.toEqual(auction);
-    expect(auctionsService.create).toHaveBeenCalledWith(
-      {
-        title: 'Vintage camera',
-        status: 'ACTIVE',
-        endDate: '2026-10-20T12:00:00+02:00',
-      },
-      'user-1',
-    );
+    expect(auctionsService.create).toHaveBeenCalledWith(input, image, 'user-1');
   });
 });

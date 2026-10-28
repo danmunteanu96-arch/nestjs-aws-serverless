@@ -17,7 +17,7 @@ export class CreateAuctionDto implements CreateAuctionInput {
   @MaxLength(200)
   title!: string;
 
-  @ApiProperty({ enum: AuctionStatus })
+  @ApiProperty({ enum: [AuctionStatus.ACTIVE] })
   @IsEnum(AuctionStatus)
   status!: AuctionStatus;
 
