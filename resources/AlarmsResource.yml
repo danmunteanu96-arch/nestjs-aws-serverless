@@ -1,0 +1,210 @@
+# =============================================================================
+# resources/AlarmsResource.yml
+#
+# Included by: api.yml (8 alarm resources)
+# AWS service: CloudWatch metric alarms.
+#
+# Every asynchronous failure path has an alarm. Each alarm publishes to the
+# shared SNS topic ARN parameter created by infra.yml.
+# The email subscription on that topic must be confirmed (see the guide).
+#
+# Cost notes:
+#   - CloudWatch includes 10 standard alarms in the free tier; this stack uses 8.
+#   - `TreatMissingData: notBreaching` means "no data" is not an alarm; only a
+#     real metric crossing the threshold changes the state.
+#
+# Dimension trick: SQS metrics need the queue NAME, but the SSM contract stores
+# the queue ARN. Fn::Split/':' + Fn::Select extracts the last ARN segment.
+# =============================================================================
+
+# Alarm 1: any visible message in the winner-notification DLQ.
+WinnerDlqMessagesAlarm:
+  Type: AWS::CloudWatch::Alarm
+  Properties:
+    AlarmName: ${self:service}-${sls:stage}-winner-dlq-messages
+    AlarmDescription: Winner notification messages require manual inspection.
+    Namespace: AWS/SQS
+    MetricName: ApproximateNumberOfMessagesVisible
+    Dimensions:
+      - Name: QueueName
+        Value:
+          Fn::Select:
+            - 5
+            - Fn::Split:
+                - ':'
+                - ${ssm:/nestjs-aws-serverless/${sls:stage}/winner-notifications/dlq-arn}
+    Statistic: Sum
+    Period: 60
+    EvaluationPeriods: 1
+    Threshold: 0
+    ComparisonOperator: GreaterThanThreshold
+    TreatMissingData: notBreaching
+    AlarmActions:
+      - ${ssm:/nestjs-aws-serverless/${sls:stage}/alerts/topic-arn}
+    Tags: &alarmTags
+      - Key: Project
+        Value: nestjs-aws-serverless
+      - Key: Environment
+        Value: ${sls:stage}
+      - Key: Owner
+        Value: ${env:RESOURCE_OWNER, 'course-team'}
+
+# Alarm 2: a winner-notification DLQ message is older than 5 minutes.
+WinnerDlqAgeAlarm:
+  Type: AWS::CloudWatch::Alarm
+  Properties:
+    AlarmName: ${self:service}-${sls:stage}-winner-dlq-age
+    AlarmDescription: A winner notification has waited in the DLQ for over five minutes.
+    Namespace: AWS/SQS
+    MetricName: ApproximateAgeOfOldestMessage
+    Dimensions:
+      - Name: QueueName
+        Value:
+          Fn::Select:
+            - 5
+            - Fn::Split:
+                - ':'
+                - ${ssm:/nestjs-aws-serverless/${sls:stage}/winner-notifications/dlq-arn}
+    Statistic: Maximum
+    Period: 60
+    EvaluationPeriods: 1
+    Threshold: 300
+    Unit: Seconds
+    ComparisonOperator: GreaterThanThreshold
+    TreatMissingData: notBreaching
+    AlarmActions:
+      - ${ssm:/nestjs-aws-serverless/${sls:stage}/alerts/topic-arn}
+    Tags: *alarmTags
+
+# Alarm 3: EventBridge could not invoke the expiration Lambda and wrote to its DLQ.
+ExpirationDlqMessagesAlarm:
+  Type: AWS::CloudWatch::Alarm
+  Properties:
+    AlarmName: ${self:service}-${sls:stage}-expiration-dlq-messages
+    AlarmDescription: EventBridge could not deliver a scheduled expiration invocation.
+    Namespace: AWS/SQS
+    MetricName: ApproximateNumberOfMessagesVisible
+    Dimensions:
+      - Name: QueueName
+        Value:
+          Fn::Select:
+            - 5
+            - Fn::Split:
+                - ':'
+                - ${ssm:/nestjs-aws-serverless/${sls:stage}/auction-expiration/dlq-arn}
+    Statistic: Sum
+    Period: 60
+    EvaluationPeriods: 1
+    Threshold: 0
+    ComparisonOperator: GreaterThanThreshold
+    TreatMissingData: notBreaching
+    AlarmActions:
+      - ${ssm:/nestjs-aws-serverless/${sls:stage}/alerts/topic-arn}
+    Tags: *alarmTags
+
+# Alarm 4: an expiration DLQ message is older than 5 minutes.
+ExpirationDlqAgeAlarm:
+  Type: AWS::CloudWatch::Alarm
+  Properties:
+    AlarmName: ${self:service}-${sls:stage}-expiration-dlq-age
+    AlarmDescription: An expiration failure has waited in the DLQ for over five minutes.
+    Namespace: AWS/SQS
+    MetricName: ApproximateAgeOfOldestMessage
+    Dimensions:
+      - Name: QueueName
+        Value:
+          Fn::Select:
+            - 5
+            - Fn::Split:
+                - ':'
+                - ${ssm:/nestjs-aws-serverless/${sls:stage}/auction-expiration/dlq-arn}
+    Statistic: Maximum
+    Period: 60
+    EvaluationPeriods: 1
+    Threshold: 300
+    Unit: Seconds
+    ComparisonOperator: GreaterThanThreshold
+    TreatMissingData: notBreaching
+    AlarmActions:
+      - ${ssm:/nestjs-aws-serverless/${sls:stage}/alerts/topic-arn}
+    Tags: *alarmTags
+
+# Alarm 5: the scheduled expiration Lambda raised at least one error.
+ExpirationErrorsAlarm:
+  Type: AWS::CloudWatch::Alarm
+  Properties:
+    AlarmName: ${self:service}-${sls:stage}-expiration-errors
+    Namespace: AWS/Lambda
+    MetricName: Errors
+    Dimensions:
+      - Name: FunctionName
+        Value: !Ref CloseExpiredAuctionsLambdaFunction
+    Statistic: Sum
+    Period: 60
+    EvaluationPeriods: 1
+    Threshold: 0
+    ComparisonOperator: GreaterThanThreshold
+    TreatMissingData: notBreaching
+    AlarmActions:
+      - ${ssm:/nestjs-aws-serverless/${sls:stage}/alerts/topic-arn}
+    Tags: *alarmTags
+
+# Alarm 6: the expiration Lambda was throttled.
+ExpirationThrottlesAlarm:
+  Type: AWS::CloudWatch::Alarm
+  Properties:
+    AlarmName: ${self:service}-${sls:stage}-expiration-throttles
+    Namespace: AWS/Lambda
+    MetricName: Throttles
+    Dimensions:
+      - Name: FunctionName
+        Value: !Ref CloseExpiredAuctionsLambdaFunction
+    Statistic: Sum
+    Period: 60
+    EvaluationPeriods: 1
+    Threshold: 0
+    ComparisonOperator: GreaterThanThreshold
+    TreatMissingData: notBreaching
+    AlarmActions:
+      - ${ssm:/nestjs-aws-serverless/${sls:stage}/alerts/topic-arn}
+    Tags: *alarmTags
+
+# Alarm 7: the SQS notification consumer raised at least one error.
+NotificationErrorsAlarm:
+  Type: AWS::CloudWatch::Alarm
+  Properties:
+    AlarmName: ${self:service}-${sls:stage}-notification-errors
+    Namespace: AWS/Lambda
+    MetricName: Errors
+    Dimensions:
+      - Name: FunctionName
+        Value: !Ref SendWinnerNotificationLambdaFunction
+    Statistic: Sum
+    Period: 60
+    EvaluationPeriods: 1
+    Threshold: 0
+    ComparisonOperator: GreaterThanThreshold
+    TreatMissingData: notBreaching
+    AlarmActions:
+      - ${ssm:/nestjs-aws-serverless/${sls:stage}/alerts/topic-arn}
+    Tags: *alarmTags
+
+# Alarm 8: the notification consumer was throttled.
+NotificationThrottlesAlarm:
+  Type: AWS::CloudWatch::Alarm
+  Properties:
+    AlarmName: ${self:service}-${sls:stage}-notification-throttles
+    Namespace: AWS/Lambda
+    MetricName: Throttles
+    Dimensions:
+      - Name: FunctionName
+        Value: !Ref SendWinnerNotificationLambdaFunction
+    Statistic: Sum
+    Period: 60
+    EvaluationPeriods: 1
+    Threshold: 0
+    ComparisonOperator: GreaterThanThreshold
+    TreatMissingData: notBreaching
+    AlarmActions:
+      - ${ssm:/nestjs-aws-serverless/${sls:stage}/alerts/topic-arn}
+    Tags: *alarmTags

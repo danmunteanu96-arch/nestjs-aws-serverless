@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
+import { AWS_CLIENT, AwsClientLifecycle } from '../aws-client-lifecycle';
 
 @Module({
   providers: [
@@ -13,6 +14,9 @@ import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
           maxAttempts: 3,
         }),
     },
+    // Shutdown receives the same cached client used by feature services.
+    { provide: AWS_CLIENT, useExisting: DynamoDBClient },
+    AwsClientLifecycle,
   ],
   exports: [DynamoDBClient],
 })

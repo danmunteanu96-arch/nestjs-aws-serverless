@@ -23,6 +23,7 @@ describe('closeExpiredAuctions', () => {
   it('queries expired active auctions and conditionally closes them', async () => {
     const send = jest
       .fn<(...args: unknown[]) => Promise<unknown>>()
+      .mockResolvedValue({})
       .mockResolvedValueOnce({
         Items: [
           {
@@ -62,7 +63,8 @@ describe('closeExpiredAuctions', () => {
     const update = send.mock.calls[1][0] as UpdateItemCommand;
     expect(update.input).toMatchObject({
       Key: { id: { S: 'auction-1' } },
-      UpdateExpression: 'SET #status = :closed REMOVE #imageKey',
+      UpdateExpression:
+        'SET #status = :closed, #expiresAt = :expiresAt REMOVE #imageKey',
       ConditionExpression:
         'attribute_exists(#id) AND #status = :active AND #endDate <= :now',
       ExpressionAttributeValues: {
@@ -76,6 +78,7 @@ describe('closeExpiredAuctions', () => {
   it('enqueues a winner notification when an auction with bids closes', async () => {
     const send = jest
       .fn<(...args: unknown[]) => Promise<unknown>>()
+      .mockResolvedValue({})
       .mockResolvedValueOnce({
         Items: [
           {
@@ -120,6 +123,7 @@ describe('closeExpiredAuctions', () => {
   it('does not enqueue when the closed auction has no winner', async () => {
     const send = jest
       .fn<(...args: unknown[]) => Promise<unknown>>()
+      .mockResolvedValue({})
       .mockResolvedValueOnce({
         Items: [
           {
@@ -151,6 +155,7 @@ describe('closeExpiredAuctions', () => {
   it('still counts the close when enqueueing the notification fails', async () => {
     const send = jest
       .fn<(...args: unknown[]) => Promise<unknown>>()
+      .mockResolvedValue({})
       .mockResolvedValueOnce({
         Items: [
           {
@@ -185,6 +190,7 @@ describe('closeExpiredAuctions', () => {
   it('skips the notification when the queue URL is not configured', async () => {
     const send = jest
       .fn<(...args: unknown[]) => Promise<unknown>>()
+      .mockResolvedValue({})
       .mockResolvedValueOnce({
         Items: [
           {
@@ -221,6 +227,7 @@ describe('closeExpiredAuctions', () => {
     conditionalError.name = 'ConditionalCheckFailedException';
     const send = jest
       .fn<(...args: unknown[]) => Promise<unknown>>()
+      .mockResolvedValue({})
       .mockResolvedValueOnce({
         Items: [{ id: { S: 'auction-1' } }],
       })
@@ -246,6 +253,7 @@ describe('closeExpiredAuctions', () => {
   it('still closes and notifies when image deletion fails', async () => {
     const send = jest
       .fn<(...args: unknown[]) => Promise<unknown>>()
+      .mockResolvedValue({})
       .mockResolvedValueOnce({
         Items: [
           {

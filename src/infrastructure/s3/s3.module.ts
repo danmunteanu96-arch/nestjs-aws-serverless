@@ -1,6 +1,7 @@
 import { S3Client } from '@aws-sdk/client-s3';
 import { Module } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { AWS_CLIENT, AwsClientLifecycle } from '../aws-client-lifecycle';
 
 @Module({
   providers: [
@@ -14,6 +15,8 @@ import { ConfigService } from '@nestjs/config';
           maxAttempts: 3,
         }),
     },
+    { provide: AWS_CLIENT, useExisting: S3Client },
+    AwsClientLifecycle,
   ],
   exports: [S3Client],
 })

@@ -1,29 +1,20 @@
-import { SendEmailCommand, SESClient } from '@aws-sdk/client-ses';
+import { SendEmailCommand } from '@aws-sdk/client-ses';
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-
-// Shape of the SQS message produced by AuctionExpirationService.
-export interface WinnerNotificationPayload {
-  auctionId?: string;
-  recipient: string;
-  title: string;
-  winningBid?: string;
-}
+import { SesResilienceService } from './ses-resilience.service';
+import type { WinnerNotificationPayload } from './winner-notification.types';
 
 @Injectable()
 export class WinnerNotificationService {
   private readonly logger = new Logger(WinnerNotificationService.name);
 
   constructor(
-    private readonly ses: SESClient,
+    private readonly sesResilience: SesResilienceService,
     private readonly configService: ConfigService,
   ) {}
 
-  // Sends the "you won" email. Unlike the old inline implementation, errors
-  // are NOT swallowed: a thrown error fails the SQS-triggered invocation,
-  // which makes the queue redeliver the message (and move it to the DLQ
-  // after maxReceiveCount). A missing sender is a permanent misconfiguration,
-  // so it throws as well — the message belongs in the DLQ for a human.
+  // Sends one validated winner email; the batch handler owns claims and DLQ fallback.
+  // Missing sender configuration is permanent and is routed to manual review.
   async sendWinnerEmail(payload: WinnerNotificationPayload): Promise<void> {
     const sender = this.configService.get<string>('SES_SENDER_EMAIL');
     if (!sender) {
@@ -56,7 +47,7 @@ export class WinnerNotificationService {
   </body>
 </html>`;
 
-    await this.ses.send(
+    await this.sesResilience.send(
       new SendEmailCommand({
         Source: sender,
         Destination: { ToAddresses: [recipient] },

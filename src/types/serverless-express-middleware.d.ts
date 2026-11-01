@@ -1,4 +1,4 @@
-declare module '@codegenie/serverless-express/src/middleware' {
+declare module '@codegenie/serverless-express/src/middleware.js' {
   import type { NextFunction, Request, Response } from 'express';
 
   export function eventContext(options?: {

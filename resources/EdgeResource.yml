@@ -1,0 +1,226 @@
+# =============================================================================
+# resources/EdgeResource.yml
+#
+# Included by: edge.yml (5 resources)
+# AWS services: CloudFront, optional WAFv2, optional ACM, optional Route 53.
+#
+# Default cost-safe profile: only EdgeDistribution is created.
+#   - default CloudFront certificate (HTTPS on *.cloudfront.net), no ACM fee
+#   - no WebACL, no Route 53 hosted zone, no custom domain
+#
+# The origin is API Gateway, addressed by the SSM value /api/id (written by
+# api.yml). CloudFront adds x-auctions-edge-key, which EdgeOriginGuard checks.
+# =============================================================================
+
+# The only resource created by the default profile.
+EdgeDistribution:
+  Type: AWS::CloudFront::Distribution
+  Properties:
+    DistributionConfig:
+      Enabled: true
+      # PriceClass_100 uses the cheapest edge locations; good for a course.
+      PriceClass: PriceClass_100
+      # Aliases only exist with a custom domain; otherwise the property is omitted.
+      Aliases: !If [UseCustomDomain, ['${self:custom.domainName}'], !Ref AWS::NoValue]
+      # Default certificate is free; ACM is used only when a custom domain is on.
+      ViewerCertificate: !If
+        - UseCustomDomain
+        - AcmCertificateArn: !GetAtt EdgeCertificate.Arn
+          SslSupportMethod: sni-only
+          MinimumProtocolVersion: TLSv1.2_2021
+        - CloudFrontDefaultCertificate: true
+      Origins:
+        - Id: RegionalHttpApi
+          # API Gateway id comes from SSM; CloudFront sends requests to the regional endpoint.
+          DomainName: !Join ['', ['${ssm:/nestjs-aws-serverless/${sls:stage}/api/id}', '.execute-api.eu-central-1.amazonaws.com']]
+          # API Gateway is a custom origin, not an S3 origin. Protocol policy
+          # belongs inside CustomOriginConfig.
+          CustomOriginConfig:
+            OriginProtocolPolicy: https-only
+            HTTPSPort: 443
+          # The x-auctions-edge-key header is added by the Lambda@Edge function
+          # below. CloudFormation does not allow ssm-secure dynamic references
+          # inside a CloudFront distribution's Origins property, so putting the
+          # secret here directly would either fail or leak it into the template.
+      DefaultCacheBehavior:
+        TargetOriginId: RegionalHttpApi
+        # HTTP visitors are redirected to HTTPS.
+        ViewerProtocolPolicy: redirect-to-https
+        AllowedMethods: [GET, HEAD, OPTIONS, PUT, POST, PATCH, DELETE]
+        # AWS managed CachingDisabled; authenticated auction responses must never be cached.
+        CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad
+        # AWS managed AllViewerExceptHostHeader; API Gateway must retain its own Host header.
+        OriginRequestPolicyId: b689b0a8-53d0-40ab-baf2-68738e2966ac
+        Compress: true
+        # Runs before each cache-miss request is forwarded to the API origin.
+        # The edge function reads the SecureString from SSM and adds the header.
+        LambdaFunctionAssociations:
+          - EventType: origin-request
+            LambdaFunctionARN: !Ref EdgeOriginHeaderVersion
+      # No WebACL is attached in the cost-safe profile; full production can opt in.
+      WebACLId: !If [UseWaf, !GetAtt EdgeWebAcl.Arn, !Ref AWS::NoValue]
+      HttpVersion: http2and3
+      IPV6Enabled: true
+
+# ---------- Lambda@Edge: adds the origin shared-secret header ---------------
+# CloudFront cannot resolve ssm-secure in Origins. This function runs on the
+# origin-request event, reads the SecureString from SSM in us-east-1, and adds
+# the header that EdgeOriginGuard checks. The secret is never in the template.
+EdgeOriginHeaderRole:
+  Type: AWS::IAM::Role
+  Properties:
+    # Lambda@Edge functions are assumed by both services.
+    AssumeRolePolicyDocument:
+      Version: '2012-10-17'
+      Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+              - lambda.amazonaws.com
+              - edgelambda.amazonaws.com
+          Action: sts:AssumeRole
+    Policies:
+      - PolicyName: edge-origin-header
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            # Read only the edge secret in us-east-1.
+            - Effect: Allow
+              Action: ssm:GetParameter
+              Resource: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/nestjs-aws-serverless/${sls:stage}/secrets/edge-shared-secret
+            # Lambda@Edge writes logs in the region nearest the viewer.
+            - Effect: Allow
+              Action:
+                - logs:CreateLogGroup
+                - logs:CreateLogStream
+                - logs:PutLogEvents
+              Resource: !Sub arn:aws:logs:*:${AWS::AccountId}:log-group:/aws/lambda/us-east-1.*
+
+# The function code stays inline: it is tiny and has no node_modules bundle.
+# It derives the stage from its own function name, so the SSM path is generic.
+EdgeOriginHeaderFunction:
+  Type: AWS::Lambda::Function
+  Properties:
+    FunctionName: nestjs-aws-serverless-edge-origin-header-${sls:stage}
+    # Lambda@Edge currently supports Node.js 20 rather than the Node 24 runtime.
+    Runtime: nodejs20.x
+    Handler: index.handler
+    Role: !GetAtt EdgeOriginHeaderRole.Arn
+    MemorySize: 128
+    Timeout: 5
+    Code:
+      ZipFile: |
+        const { SSMClient, GetParameterCommand } = require('@aws-sdk/client-ssm');
+        const client = new SSMClient({ region: 'us-east-1' });
+        let cachedSecret;
+
+        function parameterName(context) {
+          const marker = 'edge-origin-header-';
+          const name = context.functionName || 'nestjs-aws-serverless-edge-origin-header-prod';
+          const index = name.indexOf(marker);
+          const stage = index === -1 ? 'prod' : name.slice(index + marker.length);
+          return '/nestjs-aws-serverless/' + stage + '/secrets/edge-shared-secret';
+        }
+
+        async function getSecret(name) {
+          if (!cachedSecret) {
+            const result = await client.send(new GetParameterCommand({
+              Name: name,
+              WithDecryption: true,
+            }));
+            cachedSecret = result.Parameter.Value;
+          }
+          return cachedSecret;
+        }
+
+        exports.handler = async (event, context) => {
+          const request = event.Records[0].cf.request;
+          const value = await getSecret(parameterName(context));
+          request.headers['x-auctions-edge-key'] = [
+            { key: 'x-auctions-edge-key', value: value },
+          ];
+          return request;
+        };
+
+# Latest published version; CloudFront associations require a version ARN.
+EdgeOriginHeaderVersion:
+  Type: AWS::Lambda::Version
+  Properties:
+    FunctionName: !Ref EdgeOriginHeaderFunction
+
+# ---------- Optional WAF (paid): only when WAF_ENABLED=true -----------------
+EdgeWebAcl:
+  Condition: UseWaf
+  Type: AWS::WAFv2::WebACL
+  Properties:
+    Name: nestjs-aws-serverless-${sls:stage}-edge
+    # CloudFront-scoped WebACLs must be created in us-east-1.
+    Scope: CLOUDFRONT
+    Description: Per-IP flood protection plus AWS managed SQL injection inspection.
+    DefaultAction: { Allow: {} }
+    Rules:
+      # Rule 1: block one IP that sends more than wafRateLimit requests per window.
+      - Name: PerIpRateLimit
+        Priority: 1
+        Action: { Block: {} }
+        Statement:
+          RateBasedStatement:
+            Limit: ${self:custom.wafRateLimit}
+            AggregateKeyType: IP
+        VisibilityConfig:
+          SampledRequestsEnabled: true
+          CloudWatchMetricsEnabled: true
+          MetricName: nestjs-aws-serverless-${sls:stage}-rate-limit
+      # Rule 2: AWS managed SQL injection signatures.
+      - Name: ManagedSqlInjection
+        Priority: 2
+        OverrideAction: { None: {} }
+        Statement:
+          ManagedRuleGroupStatement:
+            VendorName: AWS
+            Name: AWSManagedRulesSQLiRuleSet
+        VisibilityConfig:
+          SampledRequestsEnabled: true
+          CloudWatchMetricsEnabled: true
+          MetricName: nestjs-aws-serverless-${sls:stage}-sqli
+    VisibilityConfig:
+      SampledRequestsEnabled: true
+      CloudWatchMetricsEnabled: true
+      MetricName: nestjs-aws-serverless-${sls:stage}-edge
+
+# Associates the optional WebACL with the distribution.
+EdgeWebAclAssociation:
+  Condition: UseWaf
+  Type: AWS::WAFv2::WebACLAssociation
+  Properties:
+    ResourceArn: !GetAtt EdgeDistribution.Arn
+    WebACLArn: !GetAtt EdgeWebAcl.Arn
+
+# ---------- Optional custom domain (paid): only with PROD_CUSTOM_DOMAIN_ENABLED
+EdgeCertificate:
+  Type: AWS::CertificateManager::Certificate
+  Condition: UseCustomDomain
+  Properties:
+    DomainName: ${self:custom.domainName}
+    # DNS validation requires a Route 53 hosted zone (paid monthly).
+    ValidationMethod: DNS
+    DomainValidationOptions:
+      - DomainName: ${self:custom.domainName}
+        HostedZoneId: ${self:custom.hostedZoneId}
+    Tags:
+      - { Key: Project, Value: nestjs-aws-serverless }
+      - { Key: Environment, Value: '${sls:stage}' }
+      - { Key: Owner, Value: "${env:RESOURCE_OWNER, 'course-team'}" }
+
+# Alias A record pointing the custom domain at CloudFront.
+EdgeDnsRecord:
+  Type: AWS::Route53::RecordSet
+  Condition: UseCustomDomain
+  Properties:
+    HostedZoneId: ${self:custom.hostedZoneId}
+    Name: ${self:custom.domainName}
+    Type: A
+    AliasTarget:
+      DNSName: !GetAtt EdgeDistribution.DomainName
+      # This fixed ID belongs to every CloudFront distribution, not to this project.
+      HostedZoneId: Z2FDTNDATAQYW2

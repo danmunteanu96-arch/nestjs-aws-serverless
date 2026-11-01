@@ -39,18 +39,46 @@ export class AuctionsController {
   constructor(private readonly auctionsService: AuctionsService) {}
 
   @Get()
-  @ApiOperation({ summary: 'List auctions, optionally filtered by status' })
+  @ApiOperation({ summary: 'List auctions with bounded cursor pagination' })
   @ApiQuery({ name: 'status', enum: ['ACTIVE', 'CLOSED'], required: false })
-  @ApiOkResponse({ type: AuctionResponseDto, isArray: true })
-  getAll(@Query() query: AuctionStatusQueryDto): Promise<AuctionResponseDto[]> {
-    return this.auctionsService.getAll(query.status);
+  @ApiOkResponse({
+    schema: {
+      type: 'object',
+      properties: {
+        items: {
+          type: 'array',
+          items: { $ref: '#/components/schemas/AuctionResponseDto' },
+        },
+        nextCursor: { type: 'string' },
+      },
+    },
+  })
+  getAll(@Query() query: AuctionStatusQueryDto): Promise<{
+    items: AuctionResponseDto[];
+    nextCursor?: string;
+  }> {
+    return this.auctionsService.getAll(query);
   }
 
   @Get('active')
   @ApiOperation({ summary: 'List active auctions by ending date' })
-  @ApiOkResponse({ type: AuctionResponseDto, isArray: true })
-  getActiveAuctions(): Promise<AuctionResponseDto[]> {
-    return this.auctionsService.getActiveAuctions();
+  @ApiOkResponse({
+    schema: {
+      type: 'object',
+      properties: {
+        items: {
+          type: 'array',
+          items: { $ref: '#/components/schemas/AuctionResponseDto' },
+        },
+        nextCursor: { type: 'string' },
+      },
+    },
+  })
+  getActiveAuctions(@Query() query: AuctionStatusQueryDto): Promise<{
+    items: AuctionResponseDto[];
+    nextCursor?: string;
+  }> {
+    return this.auctionsService.getActiveAuctions(query);
   }
 
   @Get(':id')
@@ -98,6 +126,7 @@ export class AuctionsController {
 
   @Patch(':id')
   @ApiParam({ name: 'id', format: 'uuid' })
+  @ApiBearerAuth()
   @ApiOkResponse({ type: AuctionResponseDto })
   @ApiBadRequestResponse({
     description: 'Validation failed or direct auction closure was requested',
@@ -105,8 +134,9 @@ export class AuctionsController {
   update(
     @Param('id', new ParseUUIDPipe()) id: string,
     @Body() body: UpdateAuctionDto,
+    @CurrentUser() user: AuthenticatedUser,
   ): Promise<AuctionResponseDto> {
-    return this.auctionsService.update(id, body);
+    return this.auctionsService.update(id, body, user.sub);
   }
 
   @Post(':id/bids')

@@ -19,13 +19,18 @@
     "test:watch": "node --experimental-vm-modules ./node_modules/jest/bin/jest.js --watch",
     "test:cov": "node --experimental-vm-modules ./node_modules/jest/bin/jest.js --coverage",
     "test:debug": "node --experimental-vm-modules --inspect-brk ./node_modules/jest/bin/jest.js --runInBand",
-    "test:e2e": "node --experimental-vm-modules ./node_modules/jest/bin/jest.js --config ./test/jest-e2e.json"
+    "test:e2e": "node --experimental-vm-modules ./node_modules/jest/bin/jest.js --config ./test/jest-e2e.json",
+    "benchmark:lambda": "bash scripts/benchmark-lambda-memory.sh",
+    "verify:artifacts": "bash scripts/verify-deployment-artifacts.sh"
   },
   "dependencies": {
+    "@aws-lambda-powertools/logger": "^2.36.0",
+    "@aws-lambda-powertools/metrics": "^2.36.0",
     "@aws-sdk/client-dynamodb": "^3.1149.0",
     "@aws-sdk/client-s3": "^3.1158.0",
     "@aws-sdk/client-ses": "^3.1152.0",
     "@aws-sdk/client-sqs": "^3.1154.0",
+    "@aws-sdk/client-ssm": "^3.1159.0",
     "@aws-sdk/s3-request-presigner": "^3.1158.0",
     "@codegenie/serverless-express": "^5.0.0",
     "@nestjs/common": "^12.0.1",
@@ -39,6 +44,7 @@
     "helmet": "^8.3.0",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1",
+    "sharp": "^0.35.5",
     "swagger-ui-dist": "^5.34.0",
     "zod": "^4.6.7"
   },

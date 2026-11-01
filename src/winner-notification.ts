@@ -1,35 +1,46 @@
-import { INestApplicationContext } from '@nestjs/common';
+import type { INestApplicationContext } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
-import { SQSEvent } from 'aws-lambda';
-import { NotificationsModule } from './modules/notifications/notifications.module';
-import {
-  WinnerNotificationPayload,
-  WinnerNotificationService,
-} from './modules/notifications/winner-notification.service';
+import type { SQSBatchResponse, SQSEvent } from 'aws-lambda';
+import { JsonLoggerService } from './common/logging/json-logger.service';
+import { loadRuntimeConfig } from './config/runtime-config';
+import type { WinnerNotificationHandler } from './modules/notifications/winner-notification.handler';
 
-let applicationContext: Promise<INestApplicationContext> | undefined;
+interface NotificationRuntime {
+  context: INestApplicationContext;
+  handler: WinnerNotificationHandler;
+}
 
-// SQS-triggered handler: each record is one "auction won" message. If any
-// record throws, the whole invocation fails and SQS redelivers the batch
-// (visibility timeout), eventually moving it to the DLQ — that retry loop is
-// the reason this consumer exists. Sends are effectively idempotent here
-// (worst case: a duplicate email after a redelivery).
-export async function handler(event: SQSEvent): Promise<void> {
-  applicationContext ??= NestFactory.createApplicationContext(
+let runtime: Promise<NotificationRuntime> | undefined;
+
+async function bootstrap(): Promise<NotificationRuntime> {
+  // Read env/secrets before importing modules that validate configuration.
+  await loadRuntimeConfig();
+  const [{ NotificationsModule }, { WinnerNotificationHandler }] =
+    await Promise.all([
+      import('./modules/notifications/notifications.module.js'),
+      import('./modules/notifications/winner-notification.handler.js'),
+    ]);
+  const context = await NestFactory.createApplicationContext(
     NotificationsModule,
+    {
+      logger: new JsonLoggerService('auctions-notifications'),
+    },
   );
+  // Queue consumers share warm clients until Nest receives the final shutdown signal.
+  context.enableShutdownHooks();
+  return { context, handler: context.get(WinnerNotificationHandler) };
+}
 
-  let context: INestApplicationContext;
+export async function handler(event: SQSEvent): Promise<SQSBatchResponse> {
+  // Reuse bootstrap and delegate per-record acknowledgement to the notification workflow.
+  runtime ??= bootstrap();
+  let current: NotificationRuntime;
   try {
-    context = await applicationContext;
+    current = await runtime;
   } catch (error: unknown) {
-    applicationContext = undefined;
+    runtime = undefined;
     throw error;
   }
 
-  const notificationService = context.get(WinnerNotificationService);
-  for (const record of event.Records) {
-    const payload = JSON.parse(record.body) as WinnerNotificationPayload;
-    await notificationService.sendWinnerEmail(payload);
-  }
+  return current.handler.handle(event);
 }

@@ -1,0 +1,41 @@
+# =============================================================================
+# resources/NotificationIdempotencyTableResource.yml
+#
+# Included by: infra.yml (resource NotificationIdempotencyTable)
+# Purpose: prevent the SQS consumer from sending the same winner email twice.
+#
+# One item per auctionId. The consumer writes a claim with an expiry (lease);
+# after SES succeeds it marks the item COMPLETED and sets expiresAt to a tombstone
+# date (30 days). A duplicate delivery sees COMPLETED and is ignored.
+#
+# Cost notes: on-demand, tiny items, TTL removes tombstones automatically.
+# Retain: deleting the stack does NOT delete the table.
+# =============================================================================
+NotificationIdempotencyTable:
+  Type: AWS::DynamoDB::Table
+  DeletionPolicy: Retain
+  UpdateReplacePolicy: Retain
+  Properties:
+    TableName: ${self:custom.project}-notification-idempotency-${sls:stage}
+    BillingMode: PAY_PER_REQUEST
+    # Same cost switch as the auctions table.
+    PointInTimeRecoverySpecification:
+      PointInTimeRecoveryEnabled: ${strToBool(${self:custom.pitrEnabled})}
+    # TTL deletes completed claims after the tombstone period.
+    TimeToLiveSpecification:
+      AttributeName: expiresAt
+      Enabled: true
+    AttributeDefinitions:
+      - AttributeName: auctionId
+        AttributeType: S
+    # One partition per auction is enough for the claim/tombstone pattern.
+    KeySchema:
+      - AttributeName: auctionId
+        KeyType: HASH
+    Tags:
+      - Key: Project
+        Value: ${self:custom.project}
+      - Key: Environment
+        Value: ${sls:stage}
+      - Key: Owner
+        Value: ${env:RESOURCE_OWNER, 'course-team'}

@@ -1,32 +1,51 @@
-# Resurse Cognito pentru autentificare (User Pool + Hosted UI + client public).
-# Validarea JWT se face in API Gateway (JWT authorizer) — vezi serverless.yml.
+# =============================================================================
+# resources/CognitoAuthResource.yml
+#
+# Included by: infra.yml (3 resources)
+# AWS service: Cognito User Pools.
+#
+# Flow:
+#   1. A user signs in and receives an IdToken from Cognito.
+#   2. Postman sends Authorization: Bearer <IdToken>.
+#   3. API Gateway's Cognito authorizer validates the token before Lambda runs.
+#   4. The Lambda reads claims (sub, email) from the API Gateway event.
+#
+# Cost notes: Cognito has a free tier for small user pools; TOTP MFA avoids
+# SMS charges. No client secret is generated because this is a public SPA/client.
+# Retain: deleting the stack does NOT delete the user pool or its users.
+# =============================================================================
 
-# AWS::Cognito::UserPool nu suporta Tags in CloudFormation (tagging doar prin TagResource API);
-# tagurile stack-ului (Project/Environment/Owner din provider.stackTags) nu se propaga pe UserPool.
+# The user directory. Email is the username and is auto-verified.
 CognitoUserPool:
   Type: AWS::Cognito::UserPool
   DeletionPolicy: Retain
   UpdateReplacePolicy: Retain
   Properties:
-    UserPoolName: ${self:service}-users-${sls:stage}
+    UserPoolName: ${self:custom.project}-users-${sls:stage}
     UsernameAttributes:
       - email
     AutoVerifiedAttributes:
       - email
+    # Strong passwords for the course; adjust for a real product policy.
     Policies:
       PasswordPolicy:
-        MinimumLength: 8
+        MinimumLength: 12
         RequireLowercase: true
         RequireUppercase: true
         RequireNumbers: true
         RequireSymbols: true
-    MfaConfiguration: 'OFF'
+        TemporaryPasswordValidityDays: 7
+    # CloudFormation enables TOTP here, avoiding SMS charges and an SNS delivery role.
+    MfaConfiguration: 'OPTIONAL'
+    EnabledMfas:
+      - SOFTWARE_TOKEN_MFA
+    # Password recovery goes through the verified email, not SMS.
     AccountRecoverySetting:
       RecoveryMechanisms:
         - Name: verified_email
           Priority: 1
 
-# Domeniul Hosted UI trebuie sa fie global unic si NU poate contine cuvinte rezervate ("aws", "amazon", "cognito")
+# A Cognito-hosted domain used by the OAuth authorization-code flow.
 CognitoUserPoolDomain:
   Type: AWS::Cognito::UserPoolDomain
   Properties:
@@ -34,13 +53,14 @@ CognitoUserPoolDomain:
     UserPoolId:
       Ref: CognitoUserPool
 
-# Client public (fara secret): Hosted UI + testare token prin AWS CLI
+# This is a public authorization-code client, so no client secret exists by design.
 CognitoUserPoolClient:
   Type: AWS::Cognito::UserPoolClient
   Properties:
-    ClientName: ${self:service}-client-${sls:stage}
+    ClientName: ${self:custom.project}-client-${sls:stage}
     UserPoolId:
       Ref: CognitoUserPool
+    # Public clients must not embed a secret in browser/mobile code.
     GenerateSecret: false
     AllowedOAuthFlowsUserPoolClient: true
     AllowedOAuthFlows:
@@ -49,16 +69,19 @@ CognitoUserPoolClient:
       - openid
       - email
       - profile
+    # Local frontend origin; set COGNITO_CALLBACK_URL for a real frontend.
     CallbackURLs:
-      - http://localhost:3000/callback
+      - ${env:COGNITO_CALLBACK_URL, 'https://app.auctions.example.com/callback'}
     LogoutURLs:
-      - http://localhost:3000/
+      - ${env:COGNITO_LOGOUT_URL, 'https://app.auctions.example.com/'}
     SupportedIdentityProviders:
       - COGNITO
+    # USER_PASSWORD_AUTH is what scripts/create-cognito-test-user.sh uses.
     ExplicitAuthFlows:
       - ALLOW_USER_PASSWORD_AUTH
       - ALLOW_USER_SRP_AUTH
       - ALLOW_REFRESH_TOKEN_AUTH
+    # Short access/ID tokens, longer refresh token (units declared below).
     AccessTokenValidity: 1
     IdTokenValidity: 1
     RefreshTokenValidity: 30
@@ -66,4 +89,5 @@ CognitoUserPoolClient:
       AccessToken: hours
       IdToken: hours
       RefreshToken: days
+    # Do not reveal whether an email exists during sign-in.
     PreventUserExistenceErrors: ENABLED

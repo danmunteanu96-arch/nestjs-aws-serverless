@@ -1,142 +1,157 @@
-# SQS în proiectul Serverless Auctions — explicație completă
+# SQS, idempotență și DLQ — ghid pentru student
 
-> **Notă:** acest fișier e doar pentru uz local (documentație de învățare).
-> NU se commit-uiește. Documentația oficială a commitului este în
-> `docs/commits/2026-10-21-sqs-winner-notifications.md`.
+## 1. De ce există coada
 
-## 1. De la ce pornește și unde se termină — lanțul complet
+Închiderea licitației și trimiterea emailului au profile diferite de disponibilitate. DynamoDB poate confirma închiderea chiar când SES este lent sau indisponibil. SQS păstrează munca și decuplează cele două operații.
+
+SQS Standard oferă livrare **cel puțin o dată**, nu exact o dată și nu ordine strictă. Codul presupune duplicate și retry-uri.
+
+## 2. Fluxul actual, pas cu pas
 
 ```text
-[START] EventBridge Scheduler (rate: 5 minute) — cron automat AWS
-   │  declanșează
-   ▼
-Lambda: closeExpiredAuctions  (src/auction-expiration.ts)
-   │  rol IAM: AuctionsExpirationRole
-   │  1. Query pe DynamoDB GSI `status-endDate-v2-index`:
-   │     toate licitațiile ACTIVE cu endDate <= acum
-   │  2. Pentru fiecare: UpdateItem CONDIȚIONAT (status: ACTIVE → CLOSED)
-   │     — condiția garantează că o licitație se închide o singură dată
-   │  3. Dacă licitația are highestBidderEmail → SendMessage în SQS
-   │     cu body JSON: { auctionId, recipient, title, winningBid }
-   │  ⚠️ Aici se OPREȘTE responsabilitatea producerului.
-   ▼
-SQS: WinnerNotificationsQueue  (resources/WinnerNotificationsQueueResource.yml)
-   │  - mesajul e stocat replicat, nu se pierde (retention 4 zile)
-   │  - visibility timeout 60s: cine ia mesajul îl "blochează" pt. ceilalți
-   │  - redrive policy: după 3 procesări eșuate → DLQ
-   │  declanșează (prin event source mapping — Lambda service face polling)
-   ▼
-Lambda: sendWinnerNotification  (src/winner-notification.ts)
-   │  rol IAM: WinnerNotificationRole
-   │  1. Primește SQSEvent cu max 10 mesaje (batchSize)
-   │  2. Pentru fiecare record: JSON.parse(body) → WinnerNotificationService
-   │  3. Trimite email HTML + text prin SES
-   │  4a. Succes → mesajul e șters automat din coadă
-   │  4b. Eroare (throw) → mesajul reapare în coadă după visibility timeout
-   ▼
-[SUCCES] Gmail: inbox/spam la câștigător
-[EȘEC × 3] SQS: WinnerNotificationsDLQ (retention 14 zile) — investigație manuală
+EventBridge rate(5 minutes)
+  │
+  ▼
+closeExpiredAuctions
+  │ Query status-endDate-v2-index: ACTIVE + endDate <= now
+  │ UpdateItem condiționat:
+  │   status = CLOSED
+  │   expiresAt = +90 zile
+  │   notificationStatus = PENDING, dacă există câștigător
+  │   REMOVE imageKey
+  ├──────────────► S3 DeleteObject image.webp + thumbnail.webp
+  │
+  │ SendMessage { auctionId, recipient, title, winningBid }
+  │ succes SQS → REMOVE notificationStatus
+  │ eșec SQS   → PENDING rămâne pentru următorul schedule
+  ▼
+WinnerNotificationsQueue
+  │ retention 4 zile, visibility timeout 360 secunde
+  │ maxReceiveCount 3, batchSize 10, batching window 5 secunde
+  ▼
+sendWinnerNotification
+  │ Zod parse pentru fiecare record
+  │ claim(auctionId, claimToken) în tabelul de idempotență
+  ├─ duplicate → acknowledge, fără email
+  ├─ busy      → acknowledge; alt worker deține lease-ul
+  └─ claimed   → SES cu timeout/retry/circuit breaker
+                  ├─ succes → COMPLETED → acknowledge
+                  └─ eșec   → SendMessage manual în DLQ
+                              ├─ DLQ acceptă → release lease → acknowledge sursa
+                              └─ DLQ eșuează → batchItemFailures pentru record
 ```
 
-## 2. Componentele SQS și cum se leagă de cod
+`ReportBatchItemFailures` face ca numai recordurile returnate în `batchItemFailures` să fie reîncercate de SQS. Un mesaj defect nu obligă la reprocesarea întregului batch.
 
-| Componentă AWS | Unde e definită | Rol |
-|---|---|---|
-| `WinnerNotificationsQueue` | `resources/WinnerNotificationsQueueResource.yml` | bufferul dintre producer și consumer |
-| `WinnerNotificationsDLQ` | același fișier | "coșul" mesajelor care eșuează de 3 ori |
-| `AuctionsExpirationRole` → `sqs:SendMessage` | `iam/AuctionTableIAM.yml` | producerul poate DOAR pune mesaje |
-| `WinnerNotificationRole` → `sqs:ReceiveMessage/DeleteMessage/GetQueueAttributes` + `ses:SendEmail` | același fișier | consumerul poate DOAR citi/șterge din coadă și trimite email |
-| Event source mapping | `serverless.yml` → `functions.sendWinnerNotification.events[sqs]` | lipiciul: spune lui Lambda să polleze coada |
-| `SQSClient` | `src/infrastructure/sqs/sqs.module.ts` | clientul SDK injectat în producer |
-| `WINNER_NOTIFICATIONS_QUEUE_URL` | `serverless.yml` provider.environment + `src/config/configuration.module.ts` | URL-ul cozii, injectat automat prin `Ref` |
+## 3. Unde sunt implementate regulile
 
-## 3. Fluxul datelor prin cod (fișier cu fișier)
+| Fișier | Responsabilitate |
+|---|---|
+| `src/modules/auctions/expiration/auction-expiration.service.ts` | close atomic, PENDING, retry producer |
+| `resources/WinnerNotificationsQueueResource.yml` | queue, DLQ, retention, redrive |
+| `api.yml` | event source mapping, batch 10, partial failures |
+| `src/modules/notifications/winner-notification.types.ts` | schemă Zod strictă |
+| `src/modules/notifications/winner-notification.handler.ts` | rezultat per record și fallback DLQ |
+| `src/modules/notifications/notification-idempotency.service.ts` | claim/complete/release atomic |
+| `src/modules/notifications/ses-resilience.service.ts` | timeout, backoff, jitter, circuit |
+| `src/modules/notifications/winner-notification.service.ts` | email HTML + text, escaping |
+| `resources/AlarmsResource.yml` | alarme DLQ și Lambda |
 
-1. `src/auction-expiration.ts` — handler Lambda; creează (o singură dată, cached)
-   contextul Nest și apelează `AuctionExpirationService.closeExpiredAuctions()`.
-2. `src/modules/auctions/expiration/auction-expiration.service.ts`
-   - `closeExpiredAuctions()` — paginare peste GSI, batch-uri de 10;
-   - `closeAuctionIfExpired()` — UPDATE condiționat (idempotent!);
-   - `enqueueWinnerNotification()` — trimite JSON-ul în SQS; erorile sunt
-     logate și înghițite (notificarea nu poate strica închiderea).
-3. `src/winner-notification.ts` — handler SQS; iterează `event.Records`;
-   orice excepție → invocația eșuează → SQS redeliverează batch-ul.
-4. `src/modules/notifications/winner-notification.service.ts`
-   - `sendWinnerEmail()` — construiește HTML-ul (cu `escapeHtml` pentru titlu),
-     trimite prin SES. **Erorile NU sunt înghițite** — propagarea lor e exact
-     mecanismul de retry.
+Rolurile sunt în `iam/ExpirationRole.yml` și `iam/WinnerNotificationRole.yml`, nu într-un fișier IAM comun.
 
-## 4. Idempotența — verificată live (21.10.2026)
+## 4. Idempotența corectă
 
-**Experiment:** același mesaj trimis de 2 ori manual către consumer
-(`aws lambda invoke` × 2, payload identic, auctionId "drill-idempotency").
+Cheia de idempotență este `auctionId`. Fiecare procesare primește și un `claimToken` UUID.
 
-**Rezultat:** 2 invocații separate (RequestId-uri diferite), 2 emailuri trimise.
-Concluzie + starea fiecărei verigi:
+### `claim`
 
-| Verigă | Idempotentă? | De ce |
-|---|---|---|
-| Închiderea licitației (DynamoDB) | ✅ DA | `ConditionExpression: status = ACTIVE` — a doua încercare eșuează condiția |
-| Enqueue în SQS | ✅ DA (indirect) | se apelează doar după un close reușit → nu poate porni de 2 ori pentru aceeași licitație |
-| Livrarea SQS → consumer | ❌ NU | standard queue = at-least-once; plus redelivery la eșec de batch |
-| Trimiterea emailului (SES) | ❌ NU | demonstrat live: 2 mesaje identice = 2 emailuri |
+`PutItem` reușește dacă:
 
-**Cum am face emailul idempotent (dacă ar conta):**
-- variantă A: marker în DynamoDB — consumerul face întâi un UpdateItem
-  condiționat `SET winnerNotifiedAt = :now` cu `attribute_not_exists(winnerNotifiedAt)`;
-  dacă condiția pică, mesajul e duplicat → skip fără email;
-- variantă B: coadă FIFO cu `MessageDeduplicationId = auctionId`
-  (deduplicare doar pe fereastră de 5 minute — nu rezolvă retry-urile ulterioare).
+- nu există încă item pentru licitație; sau
+- itemul este `IN_PROGRESS` și lease-ul de 60 secunde a expirat.
 
-**Notă de design:** duplicarea e acceptabilă aici (worst case: 2 emailuri în
-spam). Idempotența strictă costă complexitate — o adaugi când ai o consecință
-reală (ex: plăți), nu "din principiu".
+Un item `COMPLETED` nu poate fi revendicat. La conflict, consumerul citește consistent statusul și distinge `duplicate` de `busy`.
 
-## 5. Cum testezi pas cu pas în Postman
+### `complete`
 
-### Pregătire
-1. Tokenuri proaspete (expiră la 1h). În Git Bash:
-   `bash scripts/create-cognito-test-user.sh` creează/actualizează userul.
-   Ai nevoie de DOUĂ conturi Cognito:
-   - creator: `testuser@example.com`
-   - bidder: `danmunteanu420@gmail.com` (emailul real → aici ajunge notificarea)
-2. Deschide `postman/Auctions.postman_collection.json` în Postman.
+După SES, update-ul devine `COMPLETED` numai dacă statusul și tokenul aparțin aceluiași worker. Tokenul este eliminat, iar tombstone-ul rămâne 30 de zile.
 
-### Testul
-1. **Colecție → Variables → `accessToken`** = tokenul CREATORULUI.
-2. Rulează **"Create auction"** — pre-request script-ul pune `endDate` la +5 min.
-   Salvează `id`-ul din răspuns.
-3. Schimbă **`accessToken`** = tokenul BIDDERULUI (creatorul nu poate licita pe
-   propria licitație — regulă de business, primești eroare dacă încerci).
-4. Rulează **"Place bid"** cu `{"amount": 42}` → verifici `currentBid: 42`.
-5. **Așteaptă** endDate + până la 5 minute (următorul tick EventBridge).
-6. **"Verify auto-close"** (GET by id) → `status: "CLOSED"`.
-7. Verifică emailul la danmunteanu420@gmail.com — **și folderul SPAM**.
-8. Bonus — dovezi în CloudWatch Logs:
-   - `...-closeExpiredAuctions`: "Winner notification enqueued for auction ..."
-   - `...-sendWinnerNotification`: "Winner notification sent for auction ..."
-9. Bonus — SQS Console: DLQ-ul trebuie să aibă 0 mesaje.
+### `release`
 
-### Debugging: lanțul de dovezi îți spune cine e vinovatul
-```text
-status ≠ CLOSED                    → scheduler/expiration Lambda
-CLOSED, fără log "enqueued"        → producer (fără bids? fără queue URL?)
-"enqueued", fără log în consumer   → event source mapping / IAM
-eroare SES în consumer             → identitate neverificată / FromAddress
-mesaje în DLQ                      → eșec repetat ×3 — citește mesajul din DLQ
-```
+După acceptarea fallback-ului în DLQ, lease-ul devine expirat numai pentru același token. O redrive ulterioară poate încerca din nou. Un worker întârziat nu poate completa sau elibera claim-ul altui worker.
 
-## 6. Comenzi utile (Git Bash — atenție la `MSYS_NO_PATHCONV=1`!)
+### Limita importantă
+
+Idempotența nu poate garanta exactly-once pentru efectul extern SES. Dacă SES trimite emailul, dar Lambda cade înainte de `complete`, lease-ul expiră și un retry poate trimite din nou. Soluția actuală elimină duplicatele după un `COMPLETED` durabil și face crash-ul recuperabil, dar nu pretinde imposibilul: exactly-once peste două sisteme fără tranzacție comună.
+
+## 5. Retry în două locuri diferite
+
+**Retry producer:** dacă închiderea reușește, dar SQS `SendMessage` eșuează, `notificationStatus=PENDING` rămâne. GSI sparse `notificationStatus-createdAt-index` conține numai aceste iteme. Următoarea invocare scheduled reia publicarea. După acceptarea SQS, atributul este șters.
+
+**Retry consumer:** erorile unui record pot produce retry SQS. În plus, serviciul SES are propriile încercări scurte. Aceste niveluri nu trebuie confundate:
+
+- retry-ul SDK/aplicației acoperă o eroare tranzitorie imediată;
+- visibility timeout + SQS acoperă o invocare eșuată;
+- DLQ păstrează cazul care necesită investigație;
+- PENDING acoperă eșecul înainte ca mesajul să ajungă măcar în coadă.
+
+## 6. SES circuit breaker și fallback
+
+Implicit:
+
+- maximum 3 încercări pentru erori tranzitorii;
+- timeout 5 secunde per încercare;
+- backoff 100 ms, 200 ms etc., plafonat la 2 secunde, cu jitter;
+- circuit deschis după 3 eșecuri tranzitorii consecutive;
+- cooldown 30 secunde.
+
+Erorile permanente, precum configurarea sau respingerea destinatarului, nu sunt reîncercate orb. Circuitul este per execution environment cald, nu global pentru toate instanțele Lambda.
+
+Dacă trimiterea nu reușește, handler-ul încearcă să scrie body-ul original în `WinnerNotificationsDLQ`. Sursa este confirmată numai după acceptarea DLQ. Dacă nici DLQ nu funcționează, recordul apare în `batchItemFailures` și rămâne sub controlul retry/redrive SQS.
+
+Payload-ul invalid este trimis direct în DLQ, fără claim sau SES. Logurile păstrează numai informații sigure; nu afișa destinatarul sau body-ul.
+
+## 7. Alarme și investigație
+
+Există alarme pentru ambele DLQ-uri și pentru erorile/throttling-ul celor două funcții async. SNS trimite email numai după ce confirmi abonarea.
+
+Nu șterge DLQ-ul ca să „repari” alarma. Mai întâi răspunde:
+
+1. Payload-ul respectă schema?
+2. Expeditorul SES este verificat și are IAM corect?
+3. SES este în sandbox? Destinatarul de test este permis?
+4. Există throttling, timeout sau erori 5xx?
+5. Claim-ul este `IN_PROGRESS` cu lease expirat sau `COMPLETED`?
+6. Este DLQ pentru consumer sau pentru livrarea EventBridge?
+
+Redrive este o operație deliberată după corectarea cauzei. Purge este destructiv și nu face parte din procedura normală.
+
+## 8. Exercițiu de laborator într-un stage izolat
+
+Acest laborator apelează AWS și poate genera costuri. Nu îl rula în producție.
+
+1. Creează două conturi Cognito de test și o licitație cu alt utilizator decât câștigătorul.
+2. Plasează bid-ul și așteaptă `endDate` plus următorul tick.
+3. Verifică CLOSED, absența `imageUrl` și logul `Winner notification enqueued`.
+4. În logurile consumerului caută același `auctionId` și evenimentul de succes.
+5. Trimite manual același payload valid într-un stage de test. Dacă claim-ul este COMPLETED, al doilea record trebuie ignorat fără al doilea email.
+6. Folosește un payload invalid numai în coada de test și observă DLQ + alarma.
+7. Corectează cauza, apoi redrive după procedura contului. Nu folosi adrese reale pentru teste; SES simulator este preferabil.
+
+Dovezile se caută după `auctionId` și `correlationId`, nu după presupuneri despre timp.
+
+## 9. Verificare operațională rapidă
 
 ```bash
-# câte mesaje sunt în DLQ (trebuie 0)
-MSYS_NO_PATHCONV=1 aws sqs get-queue-attributes --region eu-central-1 \
-  --queue-url "https://sqs.eu-central-1.amazonaws.com/<ACCOUNT_ID>/nestjs-aws-serverless-dev-winner-notifications-dlq" \
-  --attribute-names ApproximateNumberOfMessages
+# Ambele DLQ-uri trebuie să fie 0 vizibile și 0 in-flight.
+aws sqs get-queue-attributes \
+  --queue-url https://sqs.eu-central-1.amazonaws.com/<account>/nestjs-aws-serverless-prod-winner-notifications-dlq \
+  --attribute-names ApproximateNumberOfMessages ApproximateNumberOfMessagesNotVisible
 
-# logurile consumerului din ultima oră
-MSYS_NO_PATHCONV=1 aws logs filter-log-events --region eu-central-1 \
-  --log-group-name /aws/lambda/nestjs-aws-serverless-dev-sendWinnerNotification \
-  --start-time $(( $(date -u +%s) - 3600 ))000 \
-  --query 'events[].message' --output text
+# Urmărește decizia de idempotență și succesul SES.
+aws logs filter-log-events \
+  --log-group-name /aws/lambda/nestjs-aws-serverless-api-prod-sendWinnerNotification \
+  --filter-pattern '"Winner notification"'
 ```
+
+Alarma SNS este utilă numai după ce subscripția de email este confirmată. O subscripție `PendingConfirmation` expiră după 48 de ore; recreeaz-o și confirmă imediat. Harta completă a serviciilor, costurile și teardown-ul sunt în `docs/aws-learning-guide.md`.

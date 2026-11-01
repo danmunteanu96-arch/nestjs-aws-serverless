@@ -1,0 +1,113 @@
+# =============================================================================
+# resources/ObservabilityResource.yml
+#
+# Included by: infra.yml (6 resources)
+# AWS services: SNS (alerts), AWS Budgets, Cost Explorer anomaly detection.
+#
+# Flow: CloudWatch alarms publish to OpsAlertsTopic; an email subscription
+# sends the alert to ALERT_EMAIL. The subscription MUST be confirmed by email.
+# AWS deletes an unconfirmed subscription after 48 hours, which leaves the
+# CloudFormation resource drifted — recreate it and confirm immediately.
+#
+# Cost notes:
+#   - SNS email delivery and the topic are free at this volume.
+#   - AWS Budgets: the first two budgets are free; this profile creates one.
+#   - Cost Anomaly Detection is free; it only detects, it does not stop spend.
+#   - The budget alert is a notification, NOT a hard spending cap.
+# =============================================================================
+
+# ---------- SNS: one topic for all operational alarms -----------------------
+# Alerts share one SNS topic; email subscriptions and budgets need a real address.
+OpsAlertsTopic:
+  Type: AWS::SNS::Topic
+  Properties:
+    TopicName: ${self:custom.project}-${sls:stage}-ops-alerts
+    KmsMasterKeyId: alias/aws/sns
+    Tags:
+      - Key: Project
+        Value: ${self:custom.project}
+      - Key: Environment
+        Value: ${sls:stage}
+      - Key: Owner
+        Value: ${env:RESOURCE_OWNER, 'course-team'}
+
+# CloudWatch may publish alarms only for this AWS account; no external publisher is trusted.
+OpsAlertsTopicPolicy:
+  Type: AWS::SNS::TopicPolicy
+  Properties:
+    Topics:
+      - Ref: OpsAlertsTopic
+    PolicyDocument:
+      Version: '2012-10-17'
+      Statement:
+        - Sid: AllowCloudWatchAlarms
+          Effect: Allow
+          Principal:
+            Service: cloudwatch.amazonaws.com
+          Action: sns:Publish
+          Resource:
+            Ref: OpsAlertsTopic
+          Condition:
+            StringEquals:
+              AWS:SourceAccount:
+                Ref: AWS::AccountId
+
+# Email subscription. The user must click the link in the AWS confirmation
+# email; until then it is PendingConfirmation, and after 48h AWS discards it.
+OpsAlertsEmailSubscription:
+  Type: AWS::SNS::Subscription
+  Condition: HasAlertEmail
+  Properties:
+    Protocol: email
+    Endpoint: ${env:ALERT_EMAIL, ''}
+    TopicArn:
+      Ref: OpsAlertsTopic
+
+# Monthly cost budget. 80% of $5 = $4, so the first alert arrives before the
+# $5 mark. This is a warning only; AWS does not stop resources automatically.
+MonthlyCostBudget:
+  Type: AWS::Budgets::Budget
+  Condition: HasAlertEmail
+  Properties:
+    Budget:
+      BudgetName: ${self:custom.project}-${sls:stage}-monthly
+      BudgetType: COST
+      TimeUnit: MONTHLY
+      BudgetLimit:
+        Amount: ${env:BUDGET_LIMIT_USD, '5'}
+        Unit: USD
+    NotificationsWithSubscribers:
+      - Notification:
+          NotificationType: ACTUAL
+          ComparisonOperator: GREATER_THAN
+          Threshold: 80
+          ThresholdType: PERCENTAGE
+        Subscribers:
+          - SubscriptionType: EMAIL
+            Address: ${env:ALERT_EMAIL, ''}
+
+# Cost Anomaly Detection: watches spend per AWS service. It is free and does
+# not block spending; it only emails when usage looks abnormal.
+ServiceCostAnomalyMonitor:
+  Type: AWS::CE::AnomalyMonitor
+  Condition: CreateCostAnomalyMonitor
+  Properties:
+    MonitorName: ${self:custom.project}-${sls:stage}-services
+    MonitorType: DIMENSIONAL
+    MonitorDimension: SERVICE
+
+ServiceCostAnomalySubscription:
+  Type: AWS::CE::AnomalySubscription
+  Condition: HasAlertEmail
+  Properties:
+    SubscriptionName: ${self:custom.project}-${sls:stage}-anomalies
+    # Share the account-level monitor when one already exists.
+    MonitorArnList:
+      - Fn::If: [HasExistingCostAnomalyMonitor, "${env:COST_ANOMALY_MONITOR_ARN, ''}", !Ref ServiceCostAnomalyMonitor]
+    Frequency: DAILY
+    # Notify when the anomaly impact is at least $10. Lower it only if you
+    # understand that anomaly alerts are not a budget cap.
+    Threshold: 10
+    Subscribers:
+      - Type: Email
+        Address: ${env:ALERT_EMAIL, ''}

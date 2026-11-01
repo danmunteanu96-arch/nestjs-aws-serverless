@@ -3,28 +3,29 @@ import {
   ExecutionContext,
   HttpException,
   Injectable,
-  Logger,
   NestInterceptor,
 } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import { Observable, tap } from 'rxjs';
+import { JsonLoggerService } from '../logging/json-logger.service';
 
 @Injectable()
 export class RequestLoggingInterceptor implements NestInterceptor {
-  private readonly logger = new Logger(RequestLoggingInterceptor.name);
+  private readonly logger = new JsonLoggerService('auctions-api');
 
   intercept(context: ExecutionContext, next: CallHandler): Observable<unknown> {
     const http = context.switchToHttp();
     const request = http.getRequest<Request>();
     const response = http.getResponse<Response>();
-    const requestId = response.locals.requestId as string;
+    const correlationId = response.locals.requestId as string;
     const startedAt = Date.now();
 
     return next.handle().pipe(
       tap({
-        next: () => this.logRequest(request, response, requestId, startedAt),
+        next: () =>
+          this.logRequest(request, response, correlationId, startedAt),
         error: (error: unknown) =>
-          this.logRequest(request, response, requestId, startedAt, error),
+          this.logRequest(request, response, correlationId, startedAt, error),
       }),
     );
   }
@@ -32,7 +33,7 @@ export class RequestLoggingInterceptor implements NestInterceptor {
   private logRequest(
     request: Request,
     response: Response,
-    requestId: string,
+    correlationId: string,
     startedAt: number,
     error?: unknown,
   ): void {
@@ -42,18 +43,16 @@ export class RequestLoggingInterceptor implements NestInterceptor {
         : error instanceof HttpException
           ? error.getStatus()
           : 500;
-    const metadata = JSON.stringify({
-      requestId,
+    // Only route and timing metadata are logged; bodies, headers and actors are excluded.
+    const metadata = {
+      correlationId,
       method: request.method,
       route: request.route?.path ?? 'unmatched',
       statusCode,
       durationMs: Date.now() - startedAt,
-    });
+    };
 
-    if (error) {
-      this.logger.error(metadata);
-    } else {
-      this.logger.log(metadata);
-    }
+    if (error) this.logger.error('HTTP request failed', metadata);
+    else this.logger.log('HTTP request completed', metadata);
   }
 }

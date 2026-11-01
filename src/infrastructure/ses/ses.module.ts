@@ -1,9 +1,9 @@
 import { Module } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { SESClient } from '@aws-sdk/client-ses';
+import { AWS_CLIENT, AwsClientLifecycle } from '../aws-client-lifecycle';
 
-// Provides one shared SESClient built from validated config, mirroring
-// DynamoDBModule: region comes from AWS_REGION, maxAttempts bounds retries.
+// Application-level resilience owns SES retries; Nest owns the shared client's shutdown.
 @Module({
   providers: [
     {
@@ -12,9 +12,11 @@ import { SESClient } from '@aws-sdk/client-ses';
       useFactory: (configService: ConfigService): SESClient =>
         new SESClient({
           region: configService.getOrThrow<string>('AWS_REGION'),
-          maxAttempts: 3,
+          maxAttempts: 1,
         }),
     },
+    { provide: AWS_CLIENT, useExisting: SESClient },
+    AwsClientLifecycle,
   ],
   exports: [SESClient],
 })

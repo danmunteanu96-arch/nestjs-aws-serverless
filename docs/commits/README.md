@@ -22,4 +22,4 @@ Affected modules, AWS resources, configuration or migration steps.
 Commands run and their actual results; include known blockers.
 ```
 
-See [the NestJS production refactor record](2026-10-14-nestjs-production-refactor.md).
+See [the NestJS production refactor record](2026-10-14-nestjs-production-refactor.md) and [the local production-serverless refactor record](2026-10-29-production-serverless-refactor.md).

@@ -1,20 +1,44 @@
+# =============================================================================
+# resources/AuctionTableResource.yml
+#
+# Included by: infra.yml (resource AuctionsTable)
+# AWS service: DynamoDB, one table used for auctions and their bids.
+#
+# Design: single-table with partition key `id`. Bids are separate items whose
+# id is derived from the auction id, so they share the same partition when read.
+# The GSIs answer the list/filter/expiration queries without scanning the table.
+#
+# Cost notes:
+#   - PAY_PER_REQUEST: no provisioned capacity, no idle RCU/WCU bill.
+#   - TTL deletes closed auctions 90 days after they close.
+#   - PITR is controlled by the stack-level cost switch (off by default).
+#   - Retain: deleting the stack does NOT delete the table.
+# =============================================================================
 AuctionsTable:
   Type: AWS::DynamoDB::Table
+  # Keep auction data if the stack is deleted or the resource is replaced.
   DeletionPolicy: Retain
   UpdateReplacePolicy: Retain
   Properties:
-    # Nume dinamic bazat pe serviciu și stage (ex: nestjs-aws-serverless-auctions-dev)
-    TableName: ${self:service}-auctions-${sls:stage}
+    # The stable project prefix keeps names independent from the split stack name.
+    TableName: ${self:custom.project}-auctions-${sls:stage}
+    # On-demand billing: pay per request, ideal for a learning workload.
     BillingMode: PAY_PER_REQUEST
+    # PITR is a billable backup feature and is false unless explicitly enabled.
     PointInTimeRecoverySpecification:
-      PointInTimeRecoveryEnabled: ${strToBool(${env:DYNAMODB_PITR_ENABLED, 'false'})}
+      PointInTimeRecoveryEnabled: ${strToBool(${self:custom.pitrEnabled})}
+    # DynamoDB deletes expired closed auctions asynchronously; TTL is not a precise timer.
+    TimeToLiveSpecification:
+      AttributeName: expiresAt
+      Enabled: true
     Tags:
       - Key: Project
-        Value: ${self:service}
+        Value: ${self:custom.project}
       - Key: Environment
         Value: ${sls:stage}
       - Key: Owner
         Value: ${env:RESOURCE_OWNER, 'course-team'}
+    # Every attribute used in a key or GSI key schema must be declared here.
     AttributeDefinitions:
       - AttributeName: id
         AttributeType: S
@@ -22,14 +46,19 @@ AuctionsTable:
         AttributeType: S
       - AttributeName: status
         AttributeType: S
+      - AttributeName: notificationStatus
+        AttributeType: S
       - AttributeName: createdAt
         AttributeType: S
       - AttributeName: endDate
         AttributeType: S
+    # Primary key: one auction per id. Bids use ids prefixed with the auction id.
     KeySchema:
       - AttributeName: id
         KeyType: HASH
+    # GSIs are separate indexes maintained by DynamoDB; each supports one access pattern.
     GlobalSecondaryIndexes:
+      # List auctions by status, newest first.
       - IndexName: status-createdAt-index
         KeySchema:
           - AttributeName: status
@@ -40,6 +69,7 @@ AuctionsTable:
           ProjectionType: INCLUDE
           NonKeyAttributes:
             - title
+      # List all auctions (including bids) newest first.
       - IndexName: all-auctions-index
         KeySchema:
           - AttributeName: entityType
@@ -51,6 +81,7 @@ AuctionsTable:
           NonKeyAttributes:
             - title
             - status
+      # List auctions that have at least one bid.
       - IndexName: auctions-with-bids-index
         KeySchema:
           - AttributeName: entityType
@@ -64,9 +95,7 @@ AuctionsTable:
             - status
             - currentBid
             - highestBidderId
-      # v2 of status-endDate-index: GSI projections are immutable, so the index
-      # is versioned instead of modified. Adds highestBidderEmail so the
-      # expiration Lambda can notify winners. Remove v1 once nothing uses it.
+      # Expiration job: find ACTIVE auctions whose endDate has passed.
       - IndexName: status-endDate-v2-index
         KeySchema:
           - AttributeName: status
@@ -81,3 +110,17 @@ AuctionsTable:
             - currentBid
             - highestBidderId
             - highestBidderEmail
+      # Only pending notifications appear here, making scheduled retries inexpensive.
+      - IndexName: notificationStatus-createdAt-index
+        KeySchema:
+          - AttributeName: notificationStatus
+            KeyType: HASH
+          - AttributeName: createdAt
+            KeyType: RANGE
+        Projection:
+          ProjectionType: INCLUDE
+          NonKeyAttributes:
+            - title
+            - currentBid
+            - highestBidderEmail
+            - endDate

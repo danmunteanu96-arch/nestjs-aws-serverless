@@ -4,6 +4,7 @@ import {
   GetItemCommand,
   PutItemCommand,
   QueryCommand,
+  ScanCommand,
 } from '@aws-sdk/client-dynamodb';
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 import {
@@ -103,24 +104,27 @@ describe('AuctionsService', () => {
       ],
     });
 
-    await expect(service.getActiveAuctions()).resolves.toEqual([
-      {
-        id: 'auction-1',
-        title: 'Vintage camera',
-        status: 'ACTIVE',
-        endDate: '2026-10-20T10:00:00.000Z',
-        createdAt: '2026-10-10T12:00:00.000Z',
-        currentBid: 25,
-      },
-    ]);
+    await expect(service.getActiveAuctions()).resolves.toEqual({
+      items: [
+        {
+          id: 'auction-1',
+          title: 'Vintage camera',
+          status: 'ACTIVE',
+          endDate: '2026-10-20T10:00:00.000Z',
+          createdAt: '2026-10-10T12:00:00.000Z',
+          currentBid: 25,
+        },
+      ],
+    });
 
     const command = dynamoDb.send.mock.calls[0][0] as QueryCommand;
     expect(command.input).toMatchObject({
       TableName: 'test-auctions',
-      IndexName: 'status-endDate-index',
-      KeyConditionExpression: '#status = :active',
-      ExpressionAttributeValues: { ':active': { S: 'ACTIVE' } },
+      IndexName: 'status-endDate-v2-index',
+      KeyConditionExpression: '#status = :status',
+      ExpressionAttributeValues: { ':status': { S: 'ACTIVE' } },
       ScanIndexForward: true,
+      Limit: 50,
     });
   });
 
@@ -138,20 +142,22 @@ describe('AuctionsService', () => {
       ],
     });
 
-    await expect(service.getAll(AuctionStatus.CLOSED)).resolves.toMatchObject([
-      { id: 'auction-closed', status: AuctionStatus.CLOSED },
-    ]);
+    await expect(
+      service.getAll({ status: AuctionStatus.CLOSED, limit: 50 }),
+    ).resolves.toMatchObject({
+      items: [{ id: 'auction-closed', status: AuctionStatus.CLOSED }],
+    });
 
     expect(dynamoDb.send).toHaveBeenCalledTimes(1);
     const command = dynamoDb.send.mock.calls[0][0] as QueryCommand;
     expect(command.input).toMatchObject({
-      IndexName: 'status-endDate-index',
+      IndexName: 'status-endDate-v2-index',
       KeyConditionExpression: '#status = :status',
       ExpressionAttributeValues: { ':status': { S: AuctionStatus.CLOSED } },
     });
   });
 
-  it('queries every page of the all-auctions index', async () => {
+  it('returns one bounded page and uses its cursor on the next request', async () => {
     const firstAuction = {
       id: { S: 'auction-1' },
       title: { S: 'Vintage camera' },
@@ -160,64 +166,25 @@ describe('AuctionsService', () => {
       createdAt: { S: '2026-10-10T12:00:00.000Z' },
       currentBid: { N: '25' },
     };
-    const secondAuction = {
-      id: { S: 'auction-2' },
-      title: { S: 'Old radio' },
-      status: { S: 'CLOSED' },
-      endDate: { S: '2026-10-21T10:00:00.000Z' },
-      createdAt: { S: '2026-10-11T12:00:00.000Z' },
-      currentBid: { N: '50' },
-      highestBidderId: { S: 'bidder-2' },
-    };
-    const lastEvaluatedKey = {
-      status: { S: 'ACTIVE' },
-      endDate: { S: firstAuction.endDate.S },
-      id: { S: firstAuction.id.S },
-    };
+    const lastEvaluatedKey = { id: { S: firstAuction.id.S } };
     dynamoDb.send
       .mockResolvedValueOnce({
         Items: [firstAuction],
         LastEvaluatedKey: lastEvaluatedKey,
       })
-      .mockResolvedValueOnce({ Items: [] })
-      .mockResolvedValueOnce({ Items: [secondAuction] });
+      .mockResolvedValueOnce({ Items: [] });
 
-    await expect(service.getAll()).resolves.toEqual([
-      {
-        id: 'auction-1',
-        title: 'Vintage camera',
-        status: 'ACTIVE',
-        endDate: '2026-10-20T10:00:00.000Z',
-        createdAt: '2026-10-10T12:00:00.000Z',
-        currentBid: 25,
-      },
-      {
-        id: 'auction-2',
-        title: 'Old radio',
-        status: 'CLOSED',
-        endDate: '2026-10-21T10:00:00.000Z',
-        createdAt: '2026-10-11T12:00:00.000Z',
-        currentBid: 50,
-        highestBidderId: 'bidder-2',
-      },
-    ]);
+    const firstPage = await service.getAll({ limit: 1 });
+    expect(firstPage.items).toHaveLength(1);
+    expect(firstPage.nextCursor).toBeDefined();
+    await service.getAll({ limit: 1, cursor: firstPage.nextCursor });
 
-    expect(dynamoDb.send).toHaveBeenCalledTimes(3);
-    expect(dynamoDb.send).toHaveBeenNthCalledWith(1, expect.any(QueryCommand));
-    expect(dynamoDb.send).toHaveBeenNthCalledWith(2, expect.any(QueryCommand));
-    expect(dynamoDb.send).toHaveBeenNthCalledWith(3, expect.any(QueryCommand));
-    const secondQuery = dynamoDb.send.mock.calls[1][0] as QueryCommand;
-    expect(secondQuery.input).toMatchObject({
+    expect(dynamoDb.send).toHaveBeenCalledTimes(2);
+    const secondScan = dynamoDb.send.mock.calls[1][0] as ScanCommand;
+    expect(secondScan.input).toMatchObject({
       TableName: 'test-auctions',
-      IndexName: 'status-endDate-index',
-      KeyConditionExpression: '#status = :status',
-      ExpressionAttributeValues: { ':status': { S: 'ACTIVE' } },
       ExclusiveStartKey: lastEvaluatedKey,
-    });
-    const closedAuctionsQuery = dynamoDb.send.mock.calls[2][0] as QueryCommand;
-    expect(closedAuctionsQuery.input).toMatchObject({
-      IndexName: 'status-endDate-index',
-      ExpressionAttributeValues: { ':status': { S: 'CLOSED' } },
+      Limit: 1,
     });
   });
 
@@ -302,6 +269,7 @@ describe('AuctionsService', () => {
     );
   });
 
+  // The atomic owner condition prevents another user from modifying an existing auction.
   it('updates only the supplied fields and preserves the other auction attributes', async () => {
     dynamoDb.send.mockResolvedValueOnce({
       Attributes: {
@@ -315,7 +283,7 @@ describe('AuctionsService', () => {
     });
 
     await expect(
-      service.update('auction-1', { title: 'Updated camera' }),
+      service.update('auction-1', { title: 'Updated camera' }, 'owner-1'),
     ).resolves.toEqual({
       id: 'auction-1',
       title: 'Updated camera',
@@ -330,8 +298,11 @@ describe('AuctionsService', () => {
       TableName: 'test-auctions',
       Key: { id: { S: 'auction-1' } },
       UpdateExpression: 'SET #title = :title',
-      ConditionExpression: 'attribute_exists(#id)',
-      ExpressionAttributeValues: { ':title': { S: 'Updated camera' } },
+      ConditionExpression: 'attribute_exists(#id) AND #createdBy = :ownerId',
+      ExpressionAttributeValues: {
+        ':ownerId': { S: 'owner-1' },
+        ':title': { S: 'Updated camera' },
+      },
       ReturnValues: 'ALL_NEW',
     });
   });
@@ -491,7 +462,7 @@ describe('AuctionsService', () => {
   });
 
   it('rejects empty updates without calling DynamoDB', async () => {
-    await expect(service.update('auction-1', {})).rejects.toThrow(
+    await expect(service.update('auction-1', {}, 'owner-1')).rejects.toThrow(
       BadRequestException,
     );
     expect(dynamoDb.send).not.toHaveBeenCalled();
@@ -500,17 +471,17 @@ describe('AuctionsService', () => {
   it('returns not found instead of creating a missing auction', async () => {
     const error = new Error('The conditional request failed');
     error.name = 'ConditionalCheckFailedException';
-    dynamoDb.send.mockRejectedValueOnce(error);
+    dynamoDb.send.mockRejectedValueOnce(error).mockResolvedValueOnce({});
 
     await expect(
-      service.update('missing-auction', { status: 'ACTIVE' }),
+      service.update('missing-auction', { status: 'ACTIVE' }, 'owner-1'),
     ).rejects.toThrow(NotFoundException);
   });
 
   // Only the expiration worker may close auctions, preventing unreachable image orphans.
   it('rejects direct close updates without writing to DynamoDB', async () => {
     await expect(
-      service.update('auction-1', { status: AuctionStatus.CLOSED }),
+      service.update('auction-1', { status: AuctionStatus.CLOSED }, 'owner-1'),
     ).rejects.toThrow(BadRequestException);
     expect(dynamoDb.send).not.toHaveBeenCalled();
   });

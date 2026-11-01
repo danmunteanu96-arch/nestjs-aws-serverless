@@ -1,0 +1,80 @@
+# =============================================================================
+# iam/ApiRole.yml
+#
+# Included by: api.yml (resource AuctionsApiRole)
+# Used by: the HTTP Lambda (`api` function).
+#
+# Least privilege:
+#   - logs only for its own log group;
+#   - DynamoDB only on the auctions table (and one index);
+#   - S3 only under auctions/* in the images bucket;
+#   - SQS only GetQueueAttributes on its queue (for health);
+#   - SSM only the edge secret parameter;
+#   - kms:Decrypt only when the optional CMK is enabled.
+#
+# Lambda assumes this role through sts:AssumeRole (the trust policy below).
+# =============================================================================
+AuctionsApiRole:
+  Type: AWS::IAM::Role
+  Properties:
+    # Trust policy: only the Lambda service may assume this role.
+    AssumeRolePolicyDocument:
+      Version: '2012-10-17'
+      Statement:
+        - Effect: Allow
+          Principal: { Service: lambda.amazonaws.com }
+          Action: sts:AssumeRole
+    Policies:
+      # CloudWatch Logs: create the log group and write streams/events.
+      - PolicyName: api-logging
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action: [logs:CreateLogGroup]
+              Resource: !Sub arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/nestjs-aws-serverless-api-${sls:stage}-api
+            - Effect: Allow
+              Action: [logs:CreateLogStream, logs:PutLogEvents]
+              # CloudWatch creates stream names at runtime; only this segment is wildcarded.
+              Resource: !Sub arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/nestjs-aws-serverless-api-${sls:stage}-api:*
+      # DynamoDB/S3/SQS access needed by the auction and health endpoints.
+      - PolicyName: api-data-access
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              # Scan is bounded by the API page size and scoped only to the auctions table.
+              Action: [dynamodb:GetItem, dynamodb:PutItem, dynamodb:UpdateItem, dynamodb:DescribeTable, dynamodb:Scan]
+              Resource: ${ssm:/nestjs-aws-serverless/${sls:stage}/auctions/table-arn}
+            - Effect: Allow
+              Action: dynamodb:Query
+              Resource: !Join ['', ['${ssm:/nestjs-aws-serverless/${sls:stage}/auctions/table-arn}', '/index/status-endDate-v2-index']]
+            - Effect: Allow
+              Action: [s3:GetObject, s3:PutObject, s3:DeleteObject]
+              Resource: !Join ['', ['${ssm:/nestjs-aws-serverless/${sls:stage}/images/bucket-arn}', '/auctions/*']]
+            - Effect: Allow
+              Action: sqs:GetQueueAttributes
+              Resource: ${ssm:/nestjs-aws-serverless/${sls:stage}/winner-notifications/queue-arn}
+      # Runtime secret: only the edge shared secret, only this parameter path.
+      - PolicyName: api-runtime-configuration
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action: ssm:GetParameter
+              Resource: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/nestjs-aws-serverless/${sls:stage}/secrets/edge-shared-secret
+      # This policy exists only when the optional customer-managed Lambda key is enabled.
+      - !If
+        - UseLambdaCmk
+        - PolicyName: api-lambda-environment-kms
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: kms:Decrypt
+                Resource: "${env:LAMBDA_KMS_KEY_ARN, ''}"
+        - !Ref AWS::NoValue
+    Tags:
+      - { Key: Project, Value: nestjs-aws-serverless }
+      - { Key: Environment, Value: '${sls:stage}' }
+      - { Key: Owner, Value: "${env:RESOURCE_OWNER, 'course-team'}" }

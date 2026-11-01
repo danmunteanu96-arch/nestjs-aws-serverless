@@ -3,12 +3,13 @@ import type {
   APIGatewayProxyEventV2,
   APIGatewayProxyResultV2,
   Context,
-  Handler,
 } from 'aws-lambda';
-import { createHttpApplication } from './http/create-http-application';
+import { JsonLoggerService } from './common/logging/json-logger.service';
+import { loadRuntimeConfig } from './config/runtime-config';
 
-type ApiHandler = Handler<APIGatewayProxyEventV2, APIGatewayProxyResultV2>;
-type PromiseApiHandler = (
+// Node.js 24 Lambda removed callback-style handlers. The adapter always returns
+// a Promise when called with (event, context), so this wrapper stays async-only.
+type ApiHandler = (
   event: APIGatewayProxyEventV2,
   context: Context,
 ) => Promise<APIGatewayProxyResultV2>;
@@ -16,16 +17,25 @@ type PromiseApiHandler = (
 let server: Promise<ApiHandler> | undefined;
 
 async function bootstrap(): Promise<ApiHandler> {
+  // Load SSM SecureStrings BEFORE the Nest module graph is evaluated.
+  // ConfigModule.forRoot validates env at import time, so a static import of
+  // create-http-application would run validation before the secret exists.
+  await loadRuntimeConfig();
+  const { createHttpApplication } =
+    await import('./http/create-http-application.js');
   const app = await createHttpApplication();
+  app.useLogger(new JsonLoggerService('auctions-api'));
+  // Cleanup runs only on environment shutdown, never between warm invocations.
+  app.enableShutdownHooks();
   await app.init();
   const expressApp = app.getHttpAdapter().getInstance();
-  return serverlessExpress({ app: expressApp }) as ApiHandler;
+  return serverlessExpress({ app: expressApp }) as unknown as ApiHandler;
 }
 
-export const handler: PromiseApiHandler = async (
+export const handler = async (
   event: APIGatewayProxyEventV2,
   context: Context,
-) => {
+): Promise<APIGatewayProxyResultV2> => {
   server ??= bootstrap();
   let serverHandler: ApiHandler;
   try {
@@ -35,5 +45,6 @@ export const handler: PromiseApiHandler = async (
     throw error;
   }
 
-  return serverHandler(event, context) as Promise<APIGatewayProxyResultV2>;
+  // The adapter resolves its Promise once the Express response is complete.
+  return serverHandler(event, context);
 };

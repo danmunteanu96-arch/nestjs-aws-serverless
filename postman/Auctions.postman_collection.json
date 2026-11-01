@@ -1,13 +1,13 @@
 {
   "info": {
     "name": "Serverless Auctions API",
-    "description": "End-to-end auction flow. Run requests in order; wait approximately 5-10 minutes before verifying auto-close.\n\nCreate uses Body > form-data: title, status, endDate and a required image file (JPEG, PNG or WebP, maximum 5 MiB). Select a real file in the image row and do not add Content-Type manually; Postman generates the multipart boundary. Open imageUrl while the auction is ACTIVE: it is a temporary S3 URL valid for five minutes. After auto-close, imageUrl is absent and the private S3 object is deleted.\n\nAuth: mutations (create/update/bid) require a Cognito JWT. There are no /auth/register or /auth/login endpoints in this API — registration and login happen directly against Cognito (Hosted UI or the Cognito API). Set the `accessToken` collection variable with an IdToken from the User Pool: run ./scripts/create-cognito-test-user.sh <email> <password> to create+confirm a user and print a token, or use an existing user (dev test user: testuser@example.com). The bidder/creator identity is taken from the JWT — the bid body only carries `amount`. Business rules: the auction creator cannot bid on their own auction, and each user can bid only once per auction. GET requests stay public.",
+    "description": "Flux end-to-end pentru stack-ul în trei părți. Setează baseUrl la noul API Gateway sau CloudFront; URL-uri vechi nu sunt reutilizate automat.\n\nListele returnează { items, nextCursor? }, cu limit=50 implicit și maximum 100. Pentru pagina următoare trimite cursorul primit neschimbat.\n\nCreate folosește Body > form-data: title, status=ACTIVE, endDate și image JPEG/PNG/WebP, maximum 5 MiB. Selectează un fișier real și nu seta manual Content-Type. Răspunsul conține WebP prin imageUrl valabil 300 secunde. După auto-close, imageUrl lipsește și derivatele private sunt șterse.\n\nMutațiile cer Cognito JWT. Creează un utilizator numai cu ./scripts/create-cognito-test-user.sh <email> <password>, cu credențiale unice de test, apoi setează accessToken la IdToken. Creatorul și bidderul trebuie să fie utilizatori diferiți; identitatea vine din sub/email-ul JWT. GET rămâne public. Așteaptă endDate plus următorul tick EventBridge înainte de Verify auto-close.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
     {
       "key": "baseUrl",
-      "value": "https://peyyy5541k.execute-api.eu-central-1.amazonaws.com"
+      "value": "https://REPLACE_WITH_NEW_DEPLOYMENT_URL"
     },
     {
       "key": "auctionId",
@@ -24,9 +24,37 @@
     {
       "key": "updatedTitle",
       "value": "Postman test auction updated"
+    },
+    {
+      "key": "nextCursor",
+      "value": ""
     }
   ],
   "item": [
+    {
+      "name": "Health readiness",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/health"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('DynamoDB and SQS are ready', function () {",
+              "  pm.response.to.have.status(200);",
+              "  const report = pm.response.json();",
+              "  pm.expect(report.status).to.eql('ok');",
+              "  pm.expect(report.checks.dynamodb).to.eql('up');",
+              "  pm.expect(report.checks.sqs).to.eql('up');",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
     {
       "name": "Get all auctions",
       "request": {
@@ -39,9 +67,36 @@
           "script": {
             "type": "text/javascript",
             "exec": [
-              "pm.test('Returns all auctions', function () {",
+              "pm.test('Returns a bounded auction page', function () {",
               "  pm.response.to.have.status(200);",
-              "  pm.expect(pm.response.json()).to.be.an('array');",
+              "  const page = pm.response.json();",
+              "  pm.expect(page.items).to.be.an('array');",
+              "  pm.expect(page.items.length).to.be.at.most(50);",
+              "  pm.collectionVariables.set('nextCursor', page.nextCursor || '');",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Get next auction page (requires nextCursor)",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/auctions?cursor={{nextCursor}}"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Continuation cursor was returned by the previous page', function () {",
+              "  pm.expect(pm.collectionVariables.get('nextCursor')).not.to.be.empty;",
+              "});",
+              "pm.test('Returns the next bounded page', function () {",
+              "  pm.response.to.have.status(200);",
+              "  pm.expect(pm.response.json().items).to.be.an('array');",
               "});"
             ]
           }
@@ -256,7 +311,7 @@
             "exec": [
               "pm.test('Active list contains the test auction with endDate', function () {",
               "  pm.response.to.have.status(200);",
-              "  const auctions = pm.response.json();",
+              "  const { items: auctions } = pm.response.json();",
               "  const auction = auctions.find((item) => item.id === pm.collectionVariables.get('auctionId'));",
               "  pm.expect(auction).to.exist;",
               "  pm.expect(auction.endDate).to.be.a('string');",
@@ -280,7 +335,7 @@
             "exec": [
               "pm.test('All-auctions list includes endDate', function () {",
               "  pm.response.to.have.status(200);",
-              "  const auctions = pm.response.json();",
+              "  const { items: auctions } = pm.response.json();",
               "  const auction = auctions.find((item) => item.id === pm.collectionVariables.get('auctionId'));",
               "  pm.expect(auction).to.exist;",
               "  pm.expect(auction.endDate).to.be.a('string');",

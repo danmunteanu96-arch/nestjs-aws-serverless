@@ -7,6 +7,7 @@ import {
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { ImageOptimizerService } from './image-optimizer.service';
 
 @Injectable()
 export class AuctionImagesService {
@@ -16,23 +17,61 @@ export class AuctionImagesService {
   constructor(
     private readonly s3: S3Client,
     private readonly configService: ConfigService,
+    private readonly optimizer: ImageOptimizerService,
   ) {}
 
-  // Validates and uploads one product image, returning only its server-owned S3 key.
+  // Stores only optimized derivatives; original uploads and metadata never reach S3.
   async upload(
     auctionId: string,
     file: Express.Multer.File | undefined,
   ): Promise<string> {
     this.validate(file);
-    const key = this.keyFor(auctionId);
+    const optimized = await this.optimizer.optimize(file.buffer);
+    await Promise.all([
+      this.putObject(this.keyFor(auctionId), optimized.image),
+      this.putObject(this.thumbnailKeyFor(auctionId), optimized.thumbnail),
+    ]);
+    return this.keyFor(auctionId);
+  }
 
+  // S3 deletion is idempotent, and both derivatives are removed on every cleanup path.
+  async removeByAuctionId(auctionId: string): Promise<void> {
+    await Promise.all([
+      this.deleteObject(this.keyFor(auctionId)),
+      this.deleteObject(this.thumbnailKeyFor(auctionId)),
+    ]);
+  }
+
+  // Signed response overrides lock both the rendered type and a safe inline filename.
+  async createReadUrl(imageKey: string): Promise<string> {
+    return getSignedUrl(
+      this.s3,
+      new GetObjectCommand({
+        Bucket: this.configService.getOrThrow<string>('AUCTION_IMAGES_BUCKET'),
+        Key: imageKey,
+        ResponseContentType: 'image/webp',
+        ResponseContentDisposition: 'inline; filename="auction-image.webp"',
+      }),
+      { expiresIn: 300 },
+    );
+  }
+
+  private keyFor(auctionId: string): string {
+    return `auctions/${auctionId}/image.webp`;
+  }
+
+  private thumbnailKeyFor(auctionId: string): string {
+    return `auctions/${auctionId}/thumbnail.webp`;
+  }
+
+  private async putObject(key: string, body: Buffer): Promise<void> {
     await this.s3.send(
       new PutObjectCommand({
         Bucket: this.configService.getOrThrow<string>('AUCTION_IMAGES_BUCKET'),
         Key: key,
-        Body: file.buffer,
-        ContentType: file.mimetype,
-        ContentLength: file.buffer.length,
+        Body: body,
+        ContentType: 'image/webp',
+        ContentLength: body.length,
         ServerSideEncryption: 'AES256',
       }),
       {
@@ -41,16 +80,13 @@ export class AuctionImagesService {
         ),
       },
     );
-
-    return key;
   }
 
-  // Deletes the deterministic object; S3 treats an absent key as success, making retries safe.
-  async removeByAuctionId(auctionId: string): Promise<void> {
+  private async deleteObject(key: string): Promise<void> {
     await this.s3.send(
       new DeleteObjectCommand({
         Bucket: this.configService.getOrThrow<string>('AUCTION_IMAGES_BUCKET'),
-        Key: this.keyFor(auctionId),
+        Key: key,
       }),
       {
         abortSignal: AbortSignal.timeout(
@@ -58,23 +94,6 @@ export class AuctionImagesService {
         ),
       },
     );
-  }
-
-  // Signs a temporary local URL so a private S3 object can be read without public access.
-  async createReadUrl(imageKey: string): Promise<string> {
-    return getSignedUrl(
-      this.s3,
-      new GetObjectCommand({
-        Bucket: this.configService.getOrThrow<string>('AUCTION_IMAGES_BUCKET'),
-        Key: imageKey,
-      }),
-      { expiresIn: 300 },
-    );
-  }
-
-  // Builds keys without user-controlled filenames, preventing path injection and collisions.
-  private keyFor(auctionId: string): string {
-    return `auctions/${auctionId}/image`;
   }
 
   // Checks both the declared MIME type and magic bytes so renamed non-images are rejected.

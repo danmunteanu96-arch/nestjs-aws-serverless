@@ -1,6 +1,7 @@
-import { SendEmailCommand, SESClient } from '@aws-sdk/client-ses';
+import { SendEmailCommand } from '@aws-sdk/client-ses';
 import { describe, expect, it, jest } from '@jest/globals';
 import { ConfigService } from '@nestjs/config';
+import { SesResilienceService } from './ses-resilience.service';
 import { WinnerNotificationService } from './winner-notification.service';
 
 describe('WinnerNotificationService', () => {
@@ -9,7 +10,7 @@ describe('WinnerNotificationService', () => {
       .fn<(...args: unknown[]) => Promise<unknown>>()
       .mockResolvedValue({});
     const service = new WinnerNotificationService(
-      { send: sesSend } as unknown as SESClient,
+      { send: sesSend } as unknown as SesResilienceService,
       new ConfigService({ SES_SENDER_EMAIL: 'sender@example.com' }),
     );
 
@@ -38,7 +39,7 @@ describe('WinnerNotificationService', () => {
       .fn<(...args: unknown[]) => Promise<unknown>>()
       .mockResolvedValue({});
     const service = new WinnerNotificationService(
-      { send: sesSend } as unknown as SESClient,
+      { send: sesSend } as unknown as SesResilienceService,
       new ConfigService({ SES_SENDER_EMAIL: 'sender@example.com' }),
     );
 
@@ -54,12 +55,12 @@ describe('WinnerNotificationService', () => {
     expect(html).toContain('&lt;img src=x');
   });
 
-  it('propagates SES errors so SQS retries the message', async () => {
+  it('propagates SES errors to the batch fallback policy', async () => {
     const sesSend = jest
       .fn<(...args: unknown[]) => Promise<unknown>>()
       .mockRejectedValue(new Error('SES throttled'));
     const service = new WinnerNotificationService(
-      { send: sesSend } as unknown as SESClient,
+      { send: sesSend } as unknown as SesResilienceService,
       new ConfigService({ SES_SENDER_EMAIL: 'sender@example.com' }),
     );
 
@@ -75,7 +76,7 @@ describe('WinnerNotificationService', () => {
   it('throws when the sender address is not configured', async () => {
     const sesSend = jest.fn<(...args: unknown[]) => Promise<unknown>>();
     const service = new WinnerNotificationService(
-      { send: sesSend } as unknown as SESClient,
+      { send: sesSend } as unknown as SesResilienceService,
       new ConfigService({ SES_SENDER_EMAIL: '' }),
     );
 

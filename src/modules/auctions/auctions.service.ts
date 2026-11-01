@@ -15,11 +15,14 @@ import {
   GetItemCommand,
   PutItemCommand,
   QueryCommand,
+  ScanCommand,
   UpdateItemCommand,
 } from '@aws-sdk/client-dynamodb';
 import * as crypto from 'crypto';
 import { AuctionStatus } from './auctions.types';
-import type { Auction, AuctionRecord } from './auctions.types';
+import type { Auction, AuctionPage, AuctionRecord } from './auctions.types';
+import { decodeAuctionCursor, encodeAuctionCursor } from './auction-cursor';
+import type { AuctionStatusQueryDto } from './dto/auction-status-query.dto';
 import { CreateAuctionDto } from './dto/create-auction.dto';
 import { PlaceBidDto } from './dto/place-bid.dto';
 import { UpdateAuctionDto } from './dto/update-auction.dto';
@@ -93,93 +96,57 @@ export class AuctionsService {
     return this.toAuctionResponse(auction);
   }
 
-  async getAll(status?: AuctionStatus): Promise<Auction[]> {
+  async getAll(
+    query: AuctionStatusQueryDto = { limit: 50 },
+  ): Promise<AuctionPage> {
     const tableName = this.configService.getOrThrow<string>('AUCTIONS_TABLE');
+    const exclusiveStartKey = query.cursor
+      ? decodeAuctionCursor(query.cursor, query.status)
+      : undefined;
 
-    const auctions: Auction[] = [];
     try {
-      const statuses = status
-        ? [status]
-        : [AuctionStatus.ACTIVE, AuctionStatus.CLOSED];
-
-      for (const queryStatus of statuses) {
-        let exclusiveStartKey: Record<string, AttributeValue> | undefined;
-
-        do {
-          const result = await this.dynamoDb.send(
-            new QueryCommand({
-              TableName: tableName,
-              IndexName: 'status-endDate-index',
+      // Filtered lists use the v2 GSI; unfiltered scans are bounded by the same page size.
+      const input = {
+        TableName: tableName,
+        Limit: query.limit,
+        ExclusiveStartKey: exclusiveStartKey,
+        ...(query.status
+          ? {
+              IndexName: 'status-endDate-v2-index',
               KeyConditionExpression: '#status = :status',
-              ExpressionAttributeNames: {
-                '#status': 'status',
-              },
-              ExpressionAttributeValues: {
-                ':status': { S: queryStatus },
-              },
-              ExclusiveStartKey: exclusiveStartKey,
-            }),
-          );
-
-          for (const item of result.Items ?? []) {
-            auctions.push(await this.toAuction(item));
-          }
-
-          exclusiveStartKey = result.LastEvaluatedKey;
-        } while (exclusiveStartKey);
-      }
-
-      if (status === undefined) {
-        auctions.sort((first, second) =>
-          first.createdAt.localeCompare(second.createdAt),
-        );
-      }
-    } catch {
-      this.logger.error('Failed to retrieve auctions from DynamoDB');
+              ExpressionAttributeNames: { '#status': 'status' },
+              ExpressionAttributeValues: { ':status': { S: query.status } },
+              ScanIndexForward: true,
+            }
+          : {}),
+      };
+      const result = await this.dynamoDb.send(
+        query.status ? new QueryCommand(input) : new ScanCommand(input),
+      );
+      const items = await Promise.all(
+        (result.Items ?? []).map((item) => this.toAuction(item)),
+      );
+      return {
+        items,
+        ...(result.LastEvaluatedKey
+          ? {
+              nextCursor: encodeAuctionCursor(
+                query.status,
+                result.LastEvaluatedKey,
+              ),
+            }
+          : {}),
+      };
+    } catch (error) {
+      this.logger.error('Failed to retrieve auctions from DynamoDB', { error });
       throw new InternalServerErrorException('Failed to retrieve auctions');
     }
-
-    return auctions;
   }
 
-  async getActiveAuctions(): Promise<Auction[]> {
-    const tableName = this.configService.getOrThrow<string>('AUCTIONS_TABLE');
-
-    const auctions: Auction[] = [];
-    let exclusiveStartKey: Record<string, AttributeValue> | undefined;
-
-    try {
-      do {
-        const result = await this.dynamoDb.send(
-          new QueryCommand({
-            TableName: tableName,
-            IndexName: 'status-endDate-index',
-            KeyConditionExpression: '#status = :active',
-            ExpressionAttributeNames: {
-              '#status': 'status',
-            },
-            ExpressionAttributeValues: {
-              ':active': { S: AuctionStatus.ACTIVE },
-            },
-            ScanIndexForward: true,
-            ExclusiveStartKey: exclusiveStartKey,
-          }),
-        );
-
-        for (const item of result.Items ?? []) {
-          auctions.push(await this.toAuction(item));
-        }
-
-        exclusiveStartKey = result.LastEvaluatedKey;
-      } while (exclusiveStartKey);
-    } catch {
-      this.logger.error('Failed to retrieve active auctions from DynamoDB');
-      throw new InternalServerErrorException(
-        'Failed to retrieve active auctions',
-      );
-    }
-
-    return auctions;
+  async getActiveAuctions(
+    query: AuctionStatusQueryDto = { limit: 50 },
+  ): Promise<AuctionPage> {
+    return this.getAll({ ...query, status: AuctionStatus.ACTIVE });
   }
 
   async getById(auctionId: string): Promise<Auction> {
@@ -210,6 +177,7 @@ export class AuctionsService {
   async update(
     auctionId: string,
     validInput: UpdateAuctionDto,
+    ownerId: string,
   ): Promise<Auction> {
     const tableName = this.configService.getOrThrow<string>('AUCTIONS_TABLE');
 
@@ -218,7 +186,6 @@ export class AuctionsService {
         'Provide title, status, or endDate to update',
       );
     }
-    // Prevent direct closes from bypassing expiration's image cleanup and notification flow.
     if (validInput.status === AuctionStatus.CLOSED) {
       throw new BadRequestException(
         'Auctions are closed automatically after their end date',
@@ -226,21 +193,24 @@ export class AuctionsService {
     }
 
     const updates: string[] = [];
-    const expressionAttributeNames: Record<string, string> = { '#id': 'id' };
-    const expressionAttributeValues: Record<string, AttributeValue> = {};
+    const expressionAttributeNames: Record<string, string> = {
+      '#id': 'id',
+      '#createdBy': 'createdBy',
+    };
+    const expressionAttributeValues: Record<string, AttributeValue> = {
+      ':ownerId': { S: ownerId },
+    };
 
     if (validInput.title !== undefined) {
       updates.push('#title = :title');
       expressionAttributeNames['#title'] = 'title';
       expressionAttributeValues[':title'] = { S: validInput.title };
     }
-
     if (validInput.status !== undefined) {
       updates.push('#status = :status');
       expressionAttributeNames['#status'] = 'status';
       expressionAttributeValues[':status'] = { S: validInput.status };
     }
-
     if (validInput.endDate !== undefined) {
       updates.push('#endDate = :endDate');
       expressionAttributeNames['#endDate'] = 'endDate';
@@ -252,11 +222,11 @@ export class AuctionsService {
       const result = await this.dynamoDb.send(
         new UpdateItemCommand({
           TableName: tableName,
-          Key: {
-            id: { S: auctionId },
-          },
+          Key: { id: { S: auctionId } },
           UpdateExpression: `SET ${updates.join(', ')}`,
-          ConditionExpression: 'attribute_exists(#id)',
+          // Ownership and mutation are evaluated together, preventing check/write races.
+          ConditionExpression:
+            'attribute_exists(#id) AND #createdBy = :ownerId',
           ExpressionAttributeNames: expressionAttributeNames,
           ExpressionAttributeValues: expressionAttributeValues,
           ReturnValues: 'ALL_NEW',
@@ -269,11 +239,9 @@ export class AuctionsService {
         (error instanceof Error &&
           error.name === 'ConditionalCheckFailedException')
       ) {
-        throw new NotFoundException(
-          `Auction with id ${auctionId} was not found`,
-        );
+        await this.getById(auctionId);
+        throw new ForbiddenException('Only the auction owner can update it');
       }
-
       this.logger.error('Failed to update auction in DynamoDB');
       throw new InternalServerErrorException('Failed to update auction');
     }
@@ -284,7 +252,6 @@ export class AuctionsService {
       );
       throw new InternalServerErrorException('Failed to update auction');
     }
-
     return this.toAuction(attributes);
   }
 

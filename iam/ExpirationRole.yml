@@ -1,0 +1,70 @@
+# =============================================================================
+# iam/ExpirationRole.yml
+#
+# Included by: api.yml (resource AuctionsExpirationRole)
+# Used by: the scheduled `closeExpiredAuctions` Lambda.
+#
+# Least privilege:
+#   - logs only for its own log group;
+#   - DynamoDB UpdateItem on the table and Query on two indexes;
+#   - SQS SendMessage only to the winner-notifications queue;
+#   - S3 DeleteObject only under auctions/*;
+#   - kms:Decrypt only when the optional CMK is enabled.
+#
+# It deliberately has no GetItem/DescribeTable: the expiration path queries
+# indexes and updates items, it does not read individual auctions by key.
+# =============================================================================
+AuctionsExpirationRole:
+  Type: AWS::IAM::Role
+  Properties:
+    AssumeRolePolicyDocument:
+      Version: '2012-10-17'
+      Statement:
+        - Effect: Allow
+          Principal: { Service: lambda.amazonaws.com }
+          Action: sts:AssumeRole
+    Policies:
+      - PolicyName: expiration-logging
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action: logs:CreateLogGroup
+              Resource: !Sub arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/nestjs-aws-serverless-api-${sls:stage}-closeExpiredAuctions
+            - Effect: Allow
+              Action: [logs:CreateLogStream, logs:PutLogEvents]
+              Resource: !Sub arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/nestjs-aws-serverless-api-${sls:stage}-closeExpiredAuctions:*
+      # Data access for the close/cleanup/enqueue workflow.
+      - PolicyName: expiration-data-access
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action: dynamodb:UpdateItem
+              Resource: ${ssm:/nestjs-aws-serverless/${sls:stage}/auctions/table-arn}
+            - Effect: Allow
+              Action: dynamodb:Query
+              Resource:
+                - !Join ['', ['${ssm:/nestjs-aws-serverless/${sls:stage}/auctions/table-arn}', '/index/status-endDate-v2-index']]
+                - !Join ['', ['${ssm:/nestjs-aws-serverless/${sls:stage}/auctions/table-arn}', '/index/notificationStatus-createdAt-index']]
+            - Effect: Allow
+              Action: sqs:SendMessage
+              Resource: ${ssm:/nestjs-aws-serverless/${sls:stage}/winner-notifications/queue-arn}
+            - Effect: Allow
+              Action: s3:DeleteObject
+              Resource: !Join ['', ['${ssm:/nestjs-aws-serverless/${sls:stage}/images/bucket-arn}', '/auctions/*']]
+      # This policy exists only when the optional customer-managed Lambda key is enabled.
+      - !If
+        - UseLambdaCmk
+        - PolicyName: expiration-lambda-environment-kms
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: kms:Decrypt
+                Resource: "${env:LAMBDA_KMS_KEY_ARN, ''}"
+        - !Ref AWS::NoValue
+    Tags:
+      - { Key: Project, Value: nestjs-aws-serverless }
+      - { Key: Environment, Value: '${sls:stage}' }
+      - { Key: Owner, Value: "${env:RESOURCE_OWNER, 'course-team'}" }

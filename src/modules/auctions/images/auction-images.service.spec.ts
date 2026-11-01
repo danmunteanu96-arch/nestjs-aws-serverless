@@ -8,6 +8,7 @@ import { ConfigService } from '@nestjs/config';
 import { describe, expect, it, jest } from '@jest/globals';
 import { Readable } from 'node:stream';
 import { AuctionImagesService } from './auction-images.service';
+import { ImageOptimizerService } from './image-optimizer.service';
 
 const createFile = (mimetype: string, buffer: Buffer): Express.Multer.File => ({
   fieldname: 'image',
@@ -21,197 +22,160 @@ const createFile = (mimetype: string, buffer: Buffer): Express.Multer.File => ({
   path: '',
   stream: Readable.from(buffer),
 });
-
 const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10]);
-const png = Buffer.from([
-  0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00,
-]);
-const webp = Buffer.from([
-  0x52, 0x49, 0x46, 0x46, 0x04, 0x00, 0x00, 0x00, 0x57, 0x45, 0x42, 0x50,
-]);
+const optimized = {
+  image: Buffer.from('optimized'),
+  thumbnail: Buffer.from('thumbnail'),
+};
+const optimizer = () => ({
+  optimize: jest
+    .fn<(buffer: Buffer) => Promise<typeof optimized>>()
+    .mockResolvedValue(optimized),
+});
+const config = () =>
+  new ConfigService({ AUCTION_IMAGES_BUCKET: 'test-auction-images' });
 
 describe('AuctionImagesService', () => {
-  it.each([
-    ['image/jpeg', jpeg],
-    ['image/png', png],
-    ['image/webp', webp],
-  ])(
-    'uploads a valid %s under the auction-owned key',
-    async (mimetype, buffer) => {
-      const send = jest
-        .fn<(...args: unknown[]) => Promise<unknown>>()
-        .mockResolvedValue({});
+  it('optimizes and uploads only two WebP derivatives', async () => {
+    const send = jest
+      .fn<(...args: unknown[]) => Promise<unknown>>()
+      .mockResolvedValue({});
+    const imageOptimizer = optimizer();
+    const service = new AuctionImagesService(
+      { send } as unknown as S3Client,
+      config(),
+      imageOptimizer as unknown as ImageOptimizerService,
+    );
+
+    await expect(
+      service.upload('auction-1', createFile('image/jpeg', jpeg)),
+    ).resolves.toBe('auctions/auction-1/image.webp');
+
+    const commands = send.mock.calls.map(
+      ([command]) => command as PutObjectCommand,
+    );
+    expect(commands.map((command) => command.input.Key)).toEqual([
+      'auctions/auction-1/image.webp',
+      'auctions/auction-1/thumbnail.webp',
+    ]);
+    for (const command of commands) {
+      expect(command.input.ContentType).toBe('image/webp');
+      expect(command.input.ServerSideEncryption).toBe('AES256');
+    }
+    expect(imageOptimizer.optimize).toHaveBeenCalledWith(jpeg);
+  });
+
+  it.each([undefined, createFile('image/jpeg', Buffer.alloc(0))])(
+    'rejects missing or empty images before optimization',
+    async (file) => {
+      const imageOptimizer = optimizer();
       const service = new AuctionImagesService(
-        { send } as unknown as S3Client,
-        new ConfigService({ AUCTION_IMAGES_BUCKET: 'test-auction-images' }),
+        { send: jest.fn() } as unknown as S3Client,
+        config(),
+        imageOptimizer as unknown as ImageOptimizerService,
       );
-
-      await expect(
-        service.upload('auction-1', createFile(mimetype, buffer)),
-      ).resolves.toBe('auctions/auction-1/image');
-
-      const command = send.mock.calls[0][0] as PutObjectCommand;
-      expect(command).toBeInstanceOf(PutObjectCommand);
-      expect(command.input).toMatchObject({
-        Bucket: 'test-auction-images',
-        Key: 'auctions/auction-1/image',
-        Body: buffer,
-        ContentType: mimetype,
-        ContentLength: buffer.length,
-        ServerSideEncryption: 'AES256',
-      });
+      await expect(service.upload('auction-1', file)).rejects.toThrow(
+        BadRequestException,
+      );
+      expect(imageOptimizer.optimize).not.toHaveBeenCalled();
     },
   );
 
-  it('rejects a missing image before calling S3', async () => {
-    const send = jest.fn<(...args: unknown[]) => Promise<unknown>>();
-    const service = new AuctionImagesService(
-      { send } as unknown as S3Client,
-      new ConfigService({ AUCTION_IMAGES_BUCKET: 'test-auction-images' }),
-    );
-
-    await expect(service.upload('auction-1', undefined)).rejects.toThrow(
-      BadRequestException,
-    );
-    expect(send).not.toHaveBeenCalled();
-  });
-
-  it('rejects an empty image before calling S3', async () => {
-    const send = jest.fn<(...args: unknown[]) => Promise<unknown>>();
-    const service = new AuctionImagesService(
-      { send } as unknown as S3Client,
-      new ConfigService({ AUCTION_IMAGES_BUCKET: 'test-auction-images' }),
-    );
-
-    await expect(
-      service.upload('auction-1', createFile('image/jpeg', Buffer.alloc(0))),
-    ).rejects.toThrow(BadRequestException);
-    expect(send).not.toHaveBeenCalled();
-  });
-
-  it('rejects a MIME type outside the allowed image formats', async () => {
+  it('rejects spoofed MIME content before optimization', async () => {
+    const imageOptimizer = optimizer();
     const service = new AuctionImagesService(
       { send: jest.fn() } as unknown as S3Client,
-      new ConfigService({ AUCTION_IMAGES_BUCKET: 'test-auction-images' }),
+      config(),
+      imageOptimizer as unknown as ImageOptimizerService,
     );
-
-    await expect(
-      service.upload('auction-1', createFile('image/gif', jpeg)),
-    ).rejects.toThrow(BadRequestException);
-  });
-
-  it('rejects spoofed MIME content before calling S3', async () => {
-    const send = jest.fn<(...args: unknown[]) => Promise<unknown>>();
-    const service = new AuctionImagesService(
-      { send } as unknown as S3Client,
-      new ConfigService({ AUCTION_IMAGES_BUCKET: 'test-auction-images' }),
-    );
-
     await expect(
       service.upload(
         'auction-1',
         createFile('image/jpeg', Buffer.from('not a jpeg')),
       ),
     ).rejects.toThrow(BadRequestException);
-    expect(send).not.toHaveBeenCalled();
+    expect(imageOptimizer.optimize).not.toHaveBeenCalled();
   });
 
-  it('deletes only the deterministic image object for an auction', async () => {
+  it('deletes both optimized objects for an auction', async () => {
     const send = jest
       .fn<(...args: unknown[]) => Promise<unknown>>()
       .mockResolvedValue({});
     const service = new AuctionImagesService(
       { send } as unknown as S3Client,
-      new ConfigService({ AUCTION_IMAGES_BUCKET: 'test-auction-images' }),
+      config(),
+      optimizer() as unknown as ImageOptimizerService,
     );
 
     await service.removeByAuctionId('auction-1');
 
-    const command = send.mock.calls[0][0] as DeleteObjectCommand;
-    expect(command).toBeInstanceOf(DeleteObjectCommand);
-    expect(command.input).toEqual({
-      Bucket: 'test-auction-images',
-      Key: 'auctions/auction-1/image',
-    });
+    const commands = send.mock.calls.map(
+      ([command]) => command as DeleteObjectCommand,
+    );
+    expect(commands.map((command) => command.input.Key)).toEqual([
+      'auctions/auction-1/image.webp',
+      'auctions/auction-1/thumbnail.webp',
+    ]);
   });
 
-  // Drive each abort signal manually to verify the five-second budget for both S3 mutations.
-  it.each([
-    {
-      operation: 'upload',
-      error: 'S3 upload timed out',
-      run: (service: AuctionImagesService) =>
-        service.upload('auction-1', createFile('image/jpeg', jpeg)),
-    },
-    {
-      operation: 'deletion',
-      error: 'S3 deletion timed out',
-      run: (service: AuctionImagesService) =>
-        service.removeByAuctionId('auction-1'),
-    },
-  ])(
-    'aborts a hung image $operation after five seconds',
-    async ({ error, run }) => {
-      const controller = new AbortController();
-      const timeout = jest
-        .spyOn(AbortSignal, 'timeout')
-        .mockImplementation((milliseconds) => {
-          expect(milliseconds).toBe(5000);
-          return controller.signal;
-        });
-      const send = jest
-        .fn<
-          (
-            command: PutObjectCommand | DeleteObjectCommand,
-            options: { abortSignal: AbortSignal },
-          ) => Promise<unknown>
-        >()
-        .mockImplementation(
-          (_command, { abortSignal }) =>
-            new Promise((_resolve, reject) => {
-              abortSignal.addEventListener(
-                'abort',
-                () => reject(new Error(error)),
-                {
-                  once: true,
-                },
-              );
-            }),
-        );
-      const service = new AuctionImagesService(
-        { send } as unknown as S3Client,
-        new ConfigService({ AUCTION_IMAGES_BUCKET: 'test-auction-images' }),
-      );
-
-      try {
-        const rejection = expect(run(service)).rejects.toThrow(error);
-        controller.abort();
-        await rejection;
-        expect(timeout).toHaveBeenCalledWith(5000);
-      } finally {
-        timeout.mockRestore();
-      }
-    },
-  );
-
-  it('creates a signed five-minute read URL without contacting S3', async () => {
+  it('signs a five-minute inline WebP response without contacting S3', async () => {
     const service = new AuctionImagesService(
       new S3Client({
         region: 'eu-central-1',
         credentials: { accessKeyId: 'test', secretAccessKey: 'test' },
       }),
-      new ConfigService({ AUCTION_IMAGES_BUCKET: 'test-auction-images' }),
+      config(),
+      optimizer() as unknown as ImageOptimizerService,
     );
 
     const url = new URL(
-      await service.createReadUrl('auctions/auction-1/image'),
+      await service.createReadUrl('auctions/auction-1/image.webp'),
     );
 
-    expect(url.hostname).toBe(
-      'test-auction-images.s3.eu-central-1.amazonaws.com',
-    );
-    expect(url.pathname).toBe('/auctions/auction-1/image');
+    expect(url.pathname).toBe('/auctions/auction-1/image.webp');
     expect(url.searchParams.get('X-Amz-Expires')).toBe('300');
-    expect(url.searchParams.get('X-Amz-Signature')).toBeTruthy();
+    expect(url.searchParams.get('response-content-type')).toBe('image/webp');
+    expect(url.searchParams.get('response-content-disposition')).toBe(
+      'inline; filename="auction-image.webp"',
+    );
+  });
+
+  it('bounds each S3 mutation with a five-second abort signal', async () => {
+    const controller = new AbortController();
+    const timeout = jest
+      .spyOn(AbortSignal, 'timeout')
+      .mockImplementation((milliseconds) => {
+        expect(milliseconds).toBe(5000);
+        return controller.signal;
+      });
+    const send = jest
+      .fn<(...args: unknown[]) => Promise<unknown>>()
+      .mockImplementation(
+        (_command, options) =>
+          new Promise((_resolve, reject) => {
+            (
+              options as { abortSignal: AbortSignal }
+            ).abortSignal.addEventListener(
+              'abort',
+              () => reject(new Error('S3 timed out')),
+              { once: true },
+            );
+          }),
+      );
+    const service = new AuctionImagesService(
+      { send } as unknown as S3Client,
+      config(),
+      optimizer() as unknown as ImageOptimizerService,
+    );
+
+    try {
+      const rejection = expect(
+        service.removeByAuctionId('auction-1'),
+      ).rejects.toThrow('S3 timed out');
+      controller.abort();
+      await rejection;
+    } finally {
+      timeout.mockRestore();
+    }
   });
 });

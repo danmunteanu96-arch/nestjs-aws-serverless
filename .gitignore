@@ -3,6 +3,16 @@
 /node_modules
 /build
 
+# Serverless Framework packaging state and ZIP artifacts (generated locally).
+/.serverless
+
+# Local debug/session archive; may contain sensitive data.
+kimi-debug-session_*.zip
+
+# Generated Linux ARM64 layer contents; manifests and lockfile remain versioned.
+/layers/common/nodejs/node_modules
+/layers/common/nodejs/.install-fingerprint
+
 # TypeScript build cache
 *.tsbuildinfo
 
@@ -21,6 +31,9 @@ lerna-debug.log*
 # Tests
 /coverage
 /.nyc_output
+
+# Local Lambda memory benchmark output (CSV evidence stays out of git).
+/benchmark-results
 
 # IDEs and editors
 /.idea

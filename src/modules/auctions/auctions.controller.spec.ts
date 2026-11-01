@@ -25,16 +25,22 @@ describe('AuctionsController', () => {
       >()
       .mockResolvedValue(auction),
     getAll: jest
-      .fn<(status?: AuctionStatus) => Promise<(typeof auction)[]>>()
-      .mockResolvedValue([auction]),
+      .fn<(query?: object) => Promise<{ items: (typeof auction)[] }>>()
+      .mockResolvedValue({ items: [auction] }),
     getActiveAuctions: jest
-      .fn<() => Promise<(typeof auction)[]>>()
-      .mockResolvedValue([auction]),
+      .fn<(query?: object) => Promise<{ items: (typeof auction)[] }>>()
+      .mockResolvedValue({ items: [auction] }),
     getById: jest
       .fn<(id: string) => Promise<typeof auction>>()
       .mockResolvedValue(auction),
     update: jest
-      .fn<(id: string, input: UpdateAuctionDto) => Promise<typeof auction>>()
+      .fn<
+        (
+          id: string,
+          input: UpdateAuctionDto,
+          ownerId: string,
+        ) => Promise<typeof auction>
+      >()
       .mockResolvedValue(auction),
     placeBid: jest
       .fn<
@@ -56,15 +62,20 @@ describe('AuctionsController', () => {
   });
 
   it('returns all auctions from the service', async () => {
-    await expect(controller.getAll({})).resolves.toEqual([auction]);
-    expect(auctionsService.getAll).toHaveBeenCalledWith(undefined);
+    await expect(controller.getAll({ limit: 50 })).resolves.toEqual({
+      items: [auction],
+    });
+    expect(auctionsService.getAll).toHaveBeenCalledWith({ limit: 50 });
   });
 
   it('passes a status filter to the service', async () => {
     await expect(
-      controller.getAll({ status: AuctionStatus.CLOSED }),
-    ).resolves.toEqual([auction]);
-    expect(auctionsService.getAll).toHaveBeenCalledWith(AuctionStatus.CLOSED);
+      controller.getAll({ status: AuctionStatus.CLOSED, limit: 50 }),
+    ).resolves.toEqual({ items: [auction] });
+    expect(auctionsService.getAll).toHaveBeenCalledWith({
+      status: AuctionStatus.CLOSED,
+      limit: 50,
+    });
   });
 
   it('returns an auction by id from the service', async () => {
@@ -73,17 +84,29 @@ describe('AuctionsController', () => {
   });
 
   it('returns active auctions from the service', async () => {
-    await expect(controller.getActiveAuctions()).resolves.toEqual([auction]);
-    expect(auctionsService.getActiveAuctions).toHaveBeenCalled();
+    await expect(controller.getActiveAuctions({ limit: 50 })).resolves.toEqual({
+      items: [auction],
+    });
+    expect(auctionsService.getActiveAuctions).toHaveBeenCalledWith({
+      limit: 50,
+    });
   });
 
-  it('allows a partial update', async () => {
+  it('allows a partial update by the authenticated owner', async () => {
     await expect(
-      controller.update('auction-1', { title: 'Updated camera' }),
+      controller.update(
+        'auction-1',
+        { title: 'Updated camera' },
+        { sub: 'owner-1' },
+      ),
     ).resolves.toEqual(auction);
-    expect(auctionsService.update).toHaveBeenCalledWith('auction-1', {
-      title: 'Updated camera',
-    });
+    expect(auctionsService.update).toHaveBeenCalledWith(
+      'auction-1',
+      {
+        title: 'Updated camera',
+      },
+      'owner-1',
+    );
   });
 
   it('delegates bid placement to the service with the authenticated bidder', async () => {

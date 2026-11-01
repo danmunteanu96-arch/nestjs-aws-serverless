@@ -1,0 +1,76 @@
+# =============================================================================
+# iam/WinnerNotificationRole.yml
+#
+# Included by: api.yml (resource WinnerNotificationRole)
+# Used by: the SQS consumer `sendWinnerNotification`.
+#
+# Least privilege:
+#   - logs only for its own log group;
+#   - DynamoDB claim/tombstone only on the idempotency table;
+#   - SQS receive/delete on the work queue and send on its DLQ;
+#   - SES SendEmail (Resource '*' is an AWS API limitation, documented below);
+#   - SSM only the SES sender parameter;
+#   - kms:Decrypt only when the optional CMK is enabled.
+# =============================================================================
+WinnerNotificationRole:
+  Type: AWS::IAM::Role
+  Properties:
+    AssumeRolePolicyDocument:
+      Version: '2012-10-17'
+      Statement:
+        - Effect: Allow
+          Principal: { Service: lambda.amazonaws.com }
+          Action: sts:AssumeRole
+    Policies:
+      - PolicyName: notification-logging
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action: logs:CreateLogGroup
+              Resource: !Sub arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/nestjs-aws-serverless-api-${sls:stage}-sendWinnerNotification
+            - Effect: Allow
+              Action: [logs:CreateLogStream, logs:PutLogEvents]
+              Resource: !Sub arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/nestjs-aws-serverless-api-${sls:stage}-sendWinnerNotification:*
+      # Idempotency claim + SQS work + SES delivery.
+      - PolicyName: notification-data-access
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action: [dynamodb:GetItem, dynamodb:PutItem, dynamodb:UpdateItem]
+              Resource: ${ssm:/nestjs-aws-serverless/${sls:stage}/notifications/idempotency-table-arn}
+            - Effect: Allow
+              Action: [sqs:ReceiveMessage, sqs:DeleteMessage, sqs:GetQueueAttributes]
+              Resource: ${ssm:/nestjs-aws-serverless/${sls:stage}/winner-notifications/queue-arn}
+            - Effect: Allow
+              Action: sqs:SendMessage
+              Resource: ${ssm:/nestjs-aws-serverless/${sls:stage}/winner-notifications/dlq-arn}
+            # SES identity ARNs require the secret sender, which CloudFormation cannot resolve in IAM.
+            # The documented exception is therefore limited to SendEmail; no SendRawEmail access exists.
+            - Effect: Allow
+              Action: ses:SendEmail
+              Resource: '*'
+      # Runtime secret: only the SES sender parameter.
+      - PolicyName: notification-runtime-configuration
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action: ssm:GetParameter
+              Resource: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/nestjs-aws-serverless/${sls:stage}/secrets/ses-sender-email
+      # This policy exists only when the optional customer-managed Lambda key is enabled.
+      - !If
+        - UseLambdaCmk
+        - PolicyName: notification-lambda-environment-kms
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: kms:Decrypt
+                Resource: "${env:LAMBDA_KMS_KEY_ARN, ''}"
+        - !Ref AWS::NoValue
+    Tags:
+      - { Key: Project, Value: nestjs-aws-serverless }
+      - { Key: Environment, Value: '${sls:stage}' }
+      - { Key: Owner, Value: "${env:RESOURCE_OWNER, 'course-team'}" }

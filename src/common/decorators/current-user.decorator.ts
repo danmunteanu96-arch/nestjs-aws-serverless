@@ -14,6 +14,7 @@ export interface RequestWithApiGateway extends Request {
   apiGateway?: {
     event?: {
       requestContext?: {
+        requestId?: string;
         authorizer?: { jwt?: { claims?: Record<string, unknown> } };
       };
     };

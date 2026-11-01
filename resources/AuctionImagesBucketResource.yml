@@ -1,30 +1,58 @@
+# =============================================================================
+# resources/AuctionImagesBucketResource.yml
+#
+# Included by: infra.yml (resource AuctionImagesBucket)
+# AWS service: S3.
+#
+# Privacy model: all public access is blocked; the API never serves the bucket
+# directly. It returns a presigned URL that expires after 300 seconds.
+#
+# Versioning is on so an accidental overwrite/delete can be recovered, but
+# noncurrent versions are expired after 7 days to control storage cost. Failed
+# multipart uploads are aborted after 1 day.
+#
+# Retain: deleting the stack does NOT delete the bucket or its objects.
+# =============================================================================
 AuctionImagesBucket:
   Type: AWS::S3::Bucket
   DeletionPolicy: Retain
   UpdateReplacePolicy: Retain
   Properties:
-    # Keeps every auction object private; API responses use short-lived signed URLs.
+    BucketName: ${self:custom.project}-auction-images-${sls:stage}-${aws:accountId}
+    # Every object stays private; short-lived signed URLs are the only read path.
     PublicAccessBlockConfiguration:
       BlockPublicAcls: true
       BlockPublicPolicy: true
       IgnorePublicAcls: true
       RestrictPublicBuckets: true
+    # Disable ACLs entirely; the bucket owner owns every object.
     OwnershipControls:
       Rules:
         - ObjectOwnership: BucketOwnerEnforced
+    # Encrypt at rest with S3-managed AES-256 (no customer KMS key fee).
     BucketEncryption:
       ServerSideEncryptionConfiguration:
         - ServerSideEncryptionByDefault:
             SSEAlgorithm: AES256
+    # Keep old versions for recovery; the lifecycle rule below expires them.
+    VersioningConfiguration:
+      Status: Enabled
     LifecycleConfiguration:
       Rules:
         - Id: AbortIncompleteUploads
           Status: Enabled
+          # Failed multipart uploads would otherwise pay for orphaned parts.
           AbortIncompleteMultipartUpload:
-            DaysAfterInitiation: 7
+            DaysAfterInitiation: 1
+        - Id: ExpireOldNoncurrentImages
+          Status: Enabled
+          # Versioning keeps deleted objects as noncurrent versions; expire them
+          # quickly so image cleanup does not accumulate storage charges.
+          NoncurrentVersionExpiration:
+            NoncurrentDays: 7
     Tags:
       - Key: Project
-        Value: ${self:service}
+        Value: ${self:custom.project}
       - Key: Environment
         Value: ${sls:stage}
       - Key: Owner

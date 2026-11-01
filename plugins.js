@@ -1,9 +1,17 @@
+// =============================================================================
+// plugins.js — esbuild plugins shared by every function bundle.
+//
+// 1. esbuildPluginTsc: runs TypeScript's transpiler on files with decorators so
+//    NestJS's emitDecoratorMetadata works (esbuild alone does not emit it).
+//    forceEsm makes those files emit ESM imports, matching format: esm.
+// 2. importMetaUrlShim: fallback only for a CommonJS build. The current build
+//    is ESM, where import.meta.url is valid; NestJS is externalized and never
+//    passes through this plugin. It stays here so a CJS fallback can re-enable it.
+// =============================================================================
 const esbuildPluginTsc = require('esbuild-plugin-tsc');
 
-// @nestjs/swagger v12+ is ESM-only and calls createRequire(import.meta.url) at
-// module scope. esbuild bundles to CJS where import.meta.url is undefined, which
-// crashes the Lambda on cold start. Rewrite the token to __filename, which is
-// defined in the CJS bundle.
+// Only needed if the deployment falls back to a CommonJS bundle: in CJS output
+// import.meta.url is undefined, so @nestjs/swagger's createRequire call fails.
 const importMetaUrlShim = {
   name: 'import-meta-url-shim',
   setup(build) {
@@ -22,6 +30,8 @@ const importMetaUrlShim = {
 };
 
 module.exports = [
-  esbuildPluginTsc(),
-  importMetaUrlShim,
+  // forceEsm makes tsc treat decorated files as .mts, so externalized packages
+  // become ESM `import` statements instead of CommonJS `require()` calls.
+  esbuildPluginTsc({ forceEsm: true }),
+  // importMetaUrlShim, // enable only if this project switches back to CJS output
 ];

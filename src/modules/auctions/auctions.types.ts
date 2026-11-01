@@ -26,3 +26,8 @@ export interface Auction extends Omit<CreateAuctionInput, 'endDate'> {
 export interface AuctionRecord extends Auction {
   imageKey?: string;
 }
+
+export interface AuctionPage {
+  items: Auction[];
+  nextCursor?: string;
+}

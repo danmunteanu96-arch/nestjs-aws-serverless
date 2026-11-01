@@ -1,14 +1,34 @@
-# Winner-notification queue pair. The main queue buffers "auction won" events
-# between the expiration Lambda (producer) and the notification Lambda
-# (consumer). Messages that fail processing maxReceiveCount times are moved to
-# the DLQ so poison messages stop looping and stay available for inspection.
+# =============================================================================
+# resources/WinnerNotificationsQueueResource.yml
+#
+# Included by: infra.yml (3 queues)
+# AWS service: SQS.
+#
+# Flow:
+#   expiration Lambda --SendMessage--> WinnerNotificationsQueue
+#       --> notification Lambda (batch 10, ReportBatchItemFailures)
+#       --> after 3 failed receives --> WinnerNotificationsDLQ
+#
+# The separate AuctionExpirationDLQ is the EventBridge target DLQ: if the
+# scheduled Lambda cannot be invoked at all, EventBridge stores the event there.
+#
+# Cost notes: SQS has a monthly free tier; retention 4/14 days; SSE-SQS is free.
+# Retain: deleting the stack does NOT delete the queues.
+# =============================================================================
+
+# Main work queue consumed by the notification Lambda.
 WinnerNotificationsQueue:
   Type: AWS::SQS::Queue
+  DeletionPolicy: Retain
+  UpdateReplacePolicy: Retain
   Properties:
-    QueueName: ${self:service}-${sls:stage}-winner-notifications
-    # Must be >= the consumer Lambda timeout, otherwise a message can be
-    # redelivered while the previous attempt is still running.
-    VisibilityTimeout: 60
+    QueueName: ${self:custom.project}-${sls:stage}-winner-notifications
+    # Must exceed the Lambda timeout (60s) so a slow send is not redelivered early.
+    VisibilityTimeout: 360
+    # 4 days: enough to retry a transient SES/outage period.
+    MessageRetentionPeriod: 345600
+    SqsManagedSseEnabled: true
+    # After 3 failed receives, SQS moves the message to the DLQ.
     RedrivePolicy:
       maxReceiveCount: 3
       deadLetterTargetArn:
@@ -17,21 +37,42 @@ WinnerNotificationsQueue:
           - Arn
     Tags:
       - Key: Project
-        Value: nestjs-aws-serverless
+        Value: ${self:custom.project}
       - Key: Environment
         Value: ${sls:stage}
       - Key: Owner
         Value: ${env:RESOURCE_OWNER, 'course-team'}
+
+# Messages that repeatedly fail in the consumer land here for inspection/replay.
 WinnerNotificationsDLQ:
   Type: AWS::SQS::Queue
+  DeletionPolicy: Retain
+  UpdateReplacePolicy: Retain
   Properties:
-    QueueName: ${self:service}-${sls:stage}-winner-notifications-dlq
-    # Keep dead letters 14 days (max) so failures can be investigated and
-    # replayed long after the incident.
+    QueueName: ${self:custom.project}-${sls:stage}-winner-notifications-dlq
+    # 14 days: keep failures long enough to debug and replay manually.
     MessageRetentionPeriod: 1209600
+    SqsManagedSseEnabled: true
     Tags:
       - Key: Project
-        Value: nestjs-aws-serverless
+        Value: ${self:custom.project}
+      - Key: Environment
+        Value: ${sls:stage}
+      - Key: Owner
+        Value: ${env:RESOURCE_OWNER, 'course-team'}
+
+# EventBridge uses this DLQ when the scheduled Lambda target cannot be invoked.
+AuctionExpirationDLQ:
+  Type: AWS::SQS::Queue
+  DeletionPolicy: Retain
+  UpdateReplacePolicy: Retain
+  Properties:
+    QueueName: ${self:custom.project}-${sls:stage}-auction-expiration-dlq
+    MessageRetentionPeriod: 1209600
+    SqsManagedSseEnabled: true
+    Tags:
+      - Key: Project
+        Value: ${self:custom.project}
       - Key: Environment
         Value: ${sls:stage}
       - Key: Owner

@@ -1,5 +1,14 @@
+import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
+import { SQSClient } from '@aws-sdk/client-sqs';
 import { INestApplication } from '@nestjs/common';
-import { afterEach, beforeEach, describe, expect, it } from '@jest/globals';
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  jest,
+} from '@jest/globals';
 import request from 'supertest';
 import type { NextFunction, Request, Response } from 'express';
 import { createHttpApplication } from './../src/http/create-http-application';
@@ -29,27 +38,70 @@ const fakeGatewayClaims = (
 
 describe('HTTP API (e2e)', () => {
   let app: INestApplication;
+  const originalQueueUrl = process.env.WINNER_NOTIFICATIONS_QUEUE_URL;
 
   beforeEach(async () => {
+    // Health checks receive a deterministic queue URL without reading local credentials.
+    process.env.WINNER_NOTIFICATIONS_QUEUE_URL = 'https://sqs.test/queue';
     app = await createHttpApplication();
     app.use(fakeGatewayClaims);
     await app.init();
   });
 
-  it('returns health and a request ID', () => {
-    return request(app.getHttpServer())
-      .get('/health')
-      .expect(200)
-      .expect(({ headers, body }) => {
-        expect(body).toEqual({ status: 'ok' });
-        expect(headers['x-request-id']).toMatch(/^[A-Za-z0-9-]+$/);
-        expect(headers['content-security-policy']).toContain(
-          "script-src 'self'",
-        );
-        expect(headers['content-security-policy']).not.toContain(
-          'unsafe-inline',
-        );
-      });
+  it('returns dependency health and a request ID', async () => {
+    const dynamo = jest
+      .spyOn(DynamoDBClient.prototype, 'send')
+      .mockImplementation(() => Promise.resolve({}) as never);
+    const sqs = jest
+      .spyOn(SQSClient.prototype, 'send')
+      .mockImplementation(() => Promise.resolve({}) as never);
+    try {
+      await request(app.getHttpServer())
+        .get('/health')
+        .expect(200)
+        .expect(({ headers, body }) => {
+          expect(body).toEqual({
+            status: 'ok',
+            checks: { dynamodb: 'up', sqs: 'up' },
+          });
+          expect(headers['x-request-id']).toMatch(/^[A-Za-z0-9-]+$/);
+          expect(headers['content-security-policy']).toContain(
+            "script-src 'self'",
+          );
+          expect(headers['content-security-policy']).not.toContain(
+            'unsafe-inline',
+          );
+        });
+    } finally {
+      dynamo.mockRestore();
+      sqs.mockRestore();
+    }
+  });
+
+  it('returns a safe 503 when a health dependency fails', async () => {
+    const dynamo = jest
+      .spyOn(DynamoDBClient.prototype, 'send')
+      .mockImplementation(
+        () => Promise.reject(new Error('provider internals')) as never,
+      );
+    const sqs = jest
+      .spyOn(SQSClient.prototype, 'send')
+      .mockImplementation(() => Promise.resolve({}) as never);
+    try {
+      await request(app.getHttpServer())
+        .get('/health')
+        .expect(503)
+        .expect(({ body }) => {
+          expect(body).toMatchObject({
+            status: 'error',
+            checks: { dynamodb: 'down', sqs: 'up' },
+          });
+          expect(JSON.stringify(body)).not.toContain('provider internals');
+        });
+    } finally {
+      dynamo.mockRestore();
+      sqs.mockRestore();
+    }
   });
 
   it('serves Swagger UI with its CSP exception scoped to docs', () => {
@@ -166,6 +218,42 @@ describe('HTTP API (e2e)', () => {
       });
   });
 
+  // A page-size ceiling bounds DynamoDB work and prevents expensive client-controlled reads.
+  it('rejects auction page limits above one hundred', () => {
+    return request(app.getHttpServer())
+      .get('/auctions?limit=101')
+      .expect(400)
+      .expect(({ body }) => {
+        expect(body.message).toEqual(
+          expect.arrayContaining([expect.stringContaining('limit')]),
+        );
+      });
+  });
+
+  // Malformed opaque cursors fail at the application boundary before a database call.
+  it('rejects malformed auction cursors', () => {
+    return request(app.getHttpServer())
+      .get('/auctions?cursor=not-a-valid-cursor')
+      .expect(400)
+      .expect(({ body }) => {
+        expect(body.message).toMatch(/cursor/i);
+      });
+  });
+
+  // PATCH requires the same trusted gateway identity as the other mutation routes.
+  it('rejects auction updates without API Gateway JWT claims', async () => {
+    const anonymousApp = await createHttpApplication();
+    await anonymousApp.init();
+    try {
+      await request(anonymousApp.getHttpServer())
+        .patch('/auctions/123e4567-e89b-42d3-a456-426614174000')
+        .send({ title: 'Anonymous update' })
+        .expect(401);
+    } finally {
+      await anonymousApp.close();
+    }
+  });
+
   it('rejects malformed auction IDs at the route boundary', () => {
     return request(app.getHttpServer())
       .get('/auctions/not-a-uuid')
@@ -188,5 +276,10 @@ describe('HTTP API (e2e)', () => {
 
   afterEach(async () => {
     await app.close();
+    if (originalQueueUrl === undefined) {
+      delete process.env.WINNER_NOTIFICATIONS_QUEUE_URL;
+    } else {
+      process.env.WINNER_NOTIFICATIONS_QUEUE_URL = originalQueueUrl;
+    }
   });
 });

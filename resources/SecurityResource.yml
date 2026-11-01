@@ -1,0 +1,62 @@
+# =============================================================================
+# resources/SecurityResource.yml
+#
+# Included by: infra.yml (2 optional resources)
+# AWS service: KMS.
+#
+# This entire file is optional: both resources have Condition: UseLambdaCmk.
+# The condition is true only when LAMBDA_CMK_ENABLED=true. The default
+# cost-safe profile uses the AWS-owned Lambda encryption key instead, which has
+# no separate monthly key fee.
+#
+# Cost note: a customer-managed KMS key has a monthly prorated charge ($1/month
+# in many regions). Enable it only when you are studying key policies/rotation.
+#
+# Why Retain? Deleting a key immediately would make old encrypted data
+# unrecoverable; the 30-day pending window gives time to change your mind.
+# =============================================================================
+
+# Customer-managed key used for Lambda environment-variable encryption.
+LambdaEnvironmentKey:
+  Condition: UseLambdaCmk
+  Type: AWS::KMS::Key
+  DeletionPolicy: Retain
+  UpdateReplacePolicy: Retain
+  Properties:
+    Description: Lambda environment encryption for ${self:custom.project} ${sls:stage}
+    # Rotate automatically once per year; no manual re-encryption needed.
+    EnableKeyRotation: true
+    # Deletion is scheduled 30 days later, not immediate.
+    PendingWindowInDays: 30
+    # Key policy: the account root can administer the key. Lambda execution
+    # roles still need explicit kms:Decrypt in their IAM policies.
+    KeyPolicy:
+      Version: '2012-10-17'
+      Statement:
+        - Sid: EnableAccountManagedPermissions
+          Effect: Allow
+          Principal:
+            AWS:
+              Fn::Join:
+                - ''
+                - - 'arn:aws:iam::'
+                  - Ref: AWS::AccountId
+                  - ':root'
+          Action: kms:*
+          Resource: '*'
+    Tags:
+      - Key: Project
+        Value: ${self:custom.project}
+      - Key: Environment
+        Value: ${sls:stage}
+      - Key: Owner
+        Value: ${env:RESOURCE_OWNER, 'course-team'}
+
+# A stable alias so the key ARN can change without changing code.
+LambdaEnvironmentKeyAlias:
+  Condition: UseLambdaCmk
+  Type: AWS::KMS::Alias
+  Properties:
+    AliasName: alias/${self:custom.project}-${sls:stage}-lambda-environment
+    TargetKeyId:
+      Ref: LambdaEnvironmentKey

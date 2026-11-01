@@ -1,0 +1,353 @@
+# =============================================================================
+# api.yml — compute stack for the auctions application.
+#
+# Stack name: nestjs-aws-serverless-api-<stage>
+# Deploy order: 2) AFTER infra.yml (it reads the SSM parameters written there).
+#
+# What it creates:
+#   - three Lambda functions, all ARM64 with the shared common layer:
+#       api                  HTTP API (NestJS + serverless-express)
+#       closeExpiredAuctions EventBridge scheduled worker (every 5 minutes)
+#       sendWinnerNotification SQS consumer (batch 10, partial failures)
+#   - API Gateway HTTP API with Cognito JWT authorizer + CORS + throttling
+#   - EventBridge rule + permission + target DLQ policy
+#   - eight CloudWatch alarms
+#   - IAM roles imported from iam/*.yml
+#   - SSM parameter /api/id for edge.yml
+#
+# What it does NOT create:
+#   - DynamoDB/S3/SQS/Cognito (infra.yml owns them)
+#   - CloudFront (edge.yml owns it)
+#   - WAF, ACM, Route 53, a customer-managed KMS key or PITR
+#
+# Serverless variables used here:
+#   ${opt:stage} / ${sls:stage}   stage selection
+#   ${env:NAME, default}          deploy-time environment values
+#   ${self:custom.*}              values declared below
+#   ${ssm:/path}                  deploy-time read of infra parameters
+#   ${file(...):Key}              include a resource from resources/ or iam/
+#   ${strToBool(...)}             'true'/'false' -> boolean
+#
+# Lambda environment values are resource identifiers (table name, bucket, queue
+# URL). SecureString VALUES are never placed here; the code reads them from SSM
+# at cold start using the *_PARAMETER names below.
+#
+# Cost notes:
+#   - ARM64 is cheaper per GB-second than x86.
+#   - Memory 512/256/256 MiB are initial defaults, not measured optima.
+#   - Logs are retained 7 days to limit CloudWatch Logs storage.
+#   - 8 alarms fit inside the 10-alarm free tier.
+#   - No provisioned concurrency, no WAF, no customer-managed KMS key.
+# =============================================================================
+service: nestjs-aws-serverless-api
+
+# -----------------------------------------------------------------------------
+# plugins — packaging and local development.
+# -----------------------------------------------------------------------------
+plugins:
+  # Builds layers/common/nodejs for Linux ARM64 before packaging.
+  - ./plugins/common-layer.js
+  # Bundles each handler with esbuild (see custom.esbuild below).
+  - serverless-esbuild
+  # Local emulator only; it has no effect on AWS deployment.
+  - serverless-offline
+
+# Keep the configured plugin; Serverless 4 otherwise starts a conflicting builder.
+# The regex-based contract test expects `build:` immediately followed by this line.
+build:
+  esbuild: false
+
+# Deploy and size-check each handler independently of the other functions.
+package:
+  individually: true
+
+# -----------------------------------------------------------------------------
+# provider — AWS runtime, region, tags, API Gateway and shared Lambda env.
+# -----------------------------------------------------------------------------
+provider:
+  name: aws
+  runtime: nodejs24.x
+  region: eu-central-1
+  architecture: arm64
+  stage: ${opt:stage, 'dev'}
+  # Seven days is enough to debug the course flow and limits CloudWatch Logs cost.
+  logRetentionInDays: 7
+  deploymentMethod: direct
+  tags: &tags
+    Project: nestjs-aws-serverless
+    Environment: ${sls:stage}
+    Owner: ${env:RESOURCE_OWNER, 'course-team'}
+  stackTags: *tags
+  # HTTP API (API Gateway v2): cheaper and simpler than REST API for this app.
+  httpApi:
+    cors:
+      # API Gateway needs a YAML list; runtime origins remain configurable separately.
+      # Use an exact origin, never '*', because credentials are enabled.
+      allowedOrigins:
+        - ${env:CORS_ORIGIN, 'https://app.auctions.example.com'}
+      allowedHeaders: [Content-Type, Authorization, x-correlation-id]
+      allowedMethods: [GET, POST, PATCH, OPTIONS]
+      allowCredentials: true
+      maxAge: 600
+    authorizers:
+      # API Gateway validates the Cognito IdToken before invoking Lambda.
+      # issuerUrl/audience are read from the infra stack's SSM parameters.
+      cognitoAuthorizer:
+        identitySource: $request.header.Authorization
+        issuerUrl: ${ssm:/nestjs-aws-serverless/${sls:stage}/cognito/issuer-url}
+        audience:
+          - ${ssm:/nestjs-aws-serverless/${sls:stage}/cognito/client-id}
+  # Environment shared by all three functions. Only identifiers, never secret values.
+  environment:
+    NODE_ENV: production
+    STAGE: ${sls:stage}
+    # Bump after rotating runtime secrets so Lambda creates fresh execution
+    # environments and re-reads the SecureString from SSM.
+    CONFIG_REVISION: '2'
+    CORS_ORIGINS: ${env:CORS_ORIGINS, 'https://app.auctions.example.com'}
+    API_DOCS_ENABLED: ${env:API_DOCS_ENABLED, 'false'}
+    AUCTIONS_TABLE: ${ssm:/nestjs-aws-serverless/${sls:stage}/auctions/table-name}
+    AUCTION_IMAGES_BUCKET: ${ssm:/nestjs-aws-serverless/${sls:stage}/images/bucket-name}
+    WINNER_NOTIFICATIONS_QUEUE_URL: ${ssm:/nestjs-aws-serverless/${sls:stage}/winner-notifications/queue-url}
+    WINNER_NOTIFICATIONS_DLQ_URL: ${ssm:/nestjs-aws-serverless/${sls:stage}/winner-notifications/dlq-url}
+    NOTIFICATION_IDEMPOTENCY_TABLE: ${ssm:/nestjs-aws-serverless/${sls:stage}/notifications/idempotency-table-name}
+
+# -----------------------------------------------------------------------------
+# layers — one shared archive of Node dependencies, mounted at /opt in Lambda.
+# The layer is built by plugins/common-layer.js for Linux ARM64/glibc.
+# -----------------------------------------------------------------------------
+layers:
+  common:
+    path: layers/common
+    name: nestjs-aws-serverless-common-${sls:stage}
+    description: Shared NestJS and application runtime dependencies.
+    compatibleRuntimes: [nodejs24.x]
+    compatibleArchitectures: [arm64]
+    # A new layer version is uploaded on each deploy; old versions are not retained.
+    retain: false
+
+# -----------------------------------------------------------------------------
+# custom — esbuild bundling and cost-safe feature switches.
+# -----------------------------------------------------------------------------
+custom:
+  # Without an explicit CMK, Lambda retains its default AWS-owned encryption key.
+  lambdaCmkEnabled: ${strToBool(${env:LAMBDA_CMK_ENABLED, 'false'})}
+  # Reserved concurrency requires account quota above the AWS unreserved minimum.
+  reservedConcurrencyEnabled: ${strToBool(${env:LAMBDA_RESERVED_CONCURRENCY_ENABLED, 'false'})}
+  esbuild:
+    bundle: true
+    minify: true
+    treeShaking: true
+    keepNames: true
+    sourcemap: false
+    # plugins.js adds tsc decorator metadata and the import.meta.url shim.
+    plugins: plugins.js
+    # NestJS 12 is ESM-only. A CommonJS bundle would call require() on ESM files
+    # in the layer and fail at cold start with ERR_REQUIRE_ESM.
+    format: esm
+    # Lambda treats .mjs as an ES module; the handler names stay unchanged.
+    outputFileExtension: '.mjs'
+    # External packages are not copied into the function ZIP; they are loaded
+    # from /opt/nodejs/node_modules in the shared layer at runtime.
+    # Keep ESM-only NestJS packages external so the .mjs bundle imports them.
+    external:
+      - '@aws-sdk/*'
+      - '@codegenie/serverless-express'
+      - '@aws-lambda-powertools/logger'
+      - '@aws-lambda-powertools/metrics'
+      - '@nestjs/common'
+      - '@nestjs/config'
+      - '@nestjs/core'
+      - '@nestjs/platform-express'
+      - '@nestjs/swagger'
+      - 'class-transformer'
+      - 'class-validator'
+      - 'compression'
+      - 'express'
+      - 'helmet'
+      - 'reflect-metadata'
+      - 'rxjs'
+      - 'sharp'
+      - 'swagger-ui-dist'
+      - '@fastify/static'
+      - 'zod'
+    # The shared layer owns all runtime dependencies, so functions need no npm install.
+    # Excluding every path keeps each function ZIP small (< 5 MiB contract).
+    exclude:
+      - '*'
+    target: node24
+    platform: node
+    # serverless-esbuild may bundle up to 10 handlers concurrently.
+    concurrency: 10
+
+# -----------------------------------------------------------------------------
+# functions — handlers, IAM roles, memory/timeouts and event sources.
+# -----------------------------------------------------------------------------
+functions:
+  # HTTP entry point: API Gateway -> this Lambda -> NestJS/Express.
+  api:
+    handler: src/lambda.handler
+    environment:
+      APP_FUNCTION: api
+      # Only the HTTP function reads the CloudFront origin SecureString.
+      EDGE_SHARED_SECRET_PARAMETER: /nestjs-aws-serverless/${sls:stage}/secrets/edge-shared-secret
+    # Starting default; measure before treating this as an optimum.
+    memorySize: 512
+    # API Gateway HTTP API has a 30-second integration timeout.
+    timeout: 30
+    role: !GetAtt AuctionsApiRole.Arn
+    layers:
+      - !Ref CommonLambdaLayer
+    events:
+      # GET / is public (health/root route).
+      - httpApi:
+          path: '/'
+          method: GET
+      # Public reads: list/get auctions and health.
+      - httpApi:
+          path: '/{proxy+}'
+          method: GET
+      # Mutations require a Cognito JWT.
+      - httpApi:
+          path: '/{proxy+}'
+          method: POST
+          authorizer:
+            name: cognitoAuthorizer
+      - httpApi:
+          path: '/{proxy+}'
+          method: PATCH
+          authorizer:
+            name: cognitoAuthorizer
+
+  # Scheduled worker: EventBridge invokes it every five minutes (rule below).
+  closeExpiredAuctions:
+    handler: src/auction-expiration.handler
+    environment:
+      APP_FUNCTION: expiration
+    memorySize: 256
+    timeout: 60
+    role: !GetAtt AuctionsExpirationRole.Arn
+    layers:
+      - !Ref CommonLambdaLayer
+
+  # SQS consumer: processes winner-notification messages.
+  sendWinnerNotification:
+    handler: src/winner-notification.handler
+    environment:
+      APP_FUNCTION: notification
+      # Only the consumer reads the SES sender SecureString.
+      SES_SENDER_EMAIL_PARAMETER: /nestjs-aws-serverless/${sls:stage}/secrets/ses-sender-email
+    memorySize: 256
+    timeout: 60
+    role: !GetAtt WinnerNotificationRole.Arn
+    layers:
+      - !Ref CommonLambdaLayer
+    events:
+      # Partial batch responses retry only messages explicitly reported as failed.
+      - sqs:
+          arn: ${ssm:/nestjs-aws-serverless/${sls:stage}/winner-notifications/queue-arn}
+          batchSize: 10
+          maximumBatchingWindow: 5
+          functionResponseType: ReportBatchItemFailures
+
+# -----------------------------------------------------------------------------
+# resources — CloudFormation conditions, extensions, alarms, EventBridge and
+# the SSM output consumed by edge.yml.
+# -----------------------------------------------------------------------------
+resources:
+  # Conditions make paid/optional features opt-in.
+  Conditions:
+    # true only when LAMBDA_CMK_ENABLED=true.
+    UseLambdaCmk: !Equals ['${self:custom.lambdaCmkEnabled}', true]
+    # true only when LAMBDA_RESERVED_CONCURRENCY_ENABLED=true.
+    UseReservedConcurrency: !Equals ['${self:custom.reservedConcurrencyEnabled}', true]
+  # Extensions keep generated definitions while adding optional CMK and stage throttling.
+  # (Serverless generates the Lambda/API Gateway resources; extensions patch them.)
+  extensions:
+    HttpApiStage:
+      Properties:
+        # Reject excess traffic at API Gateway, before Lambda concurrency is consumed.
+        DefaultRouteSettings:
+          ThrottlingRateLimit: 100
+          ThrottlingBurstLimit: 200
+    ApiLambdaFunction:
+      Properties:
+        KmsKeyArn: !If [UseLambdaCmk, "${env:LAMBDA_KMS_KEY_ARN, ''}", !Ref AWS::NoValue]
+    CloseExpiredAuctionsLambdaFunction:
+      Properties:
+        KmsKeyArn: !If [UseLambdaCmk, "${env:LAMBDA_KMS_KEY_ARN, ''}", !Ref AWS::NoValue]
+        ReservedConcurrentExecutions: !If [UseReservedConcurrency, 1, !Ref AWS::NoValue]
+    SendWinnerNotificationLambdaFunction:
+      Properties:
+        KmsKeyArn: !If [UseLambdaCmk, "${env:LAMBDA_KMS_KEY_ARN, ''}", !Ref AWS::NoValue]
+  # IAM roles and alarms are imported from fragments to keep this file readable.
+  Resources:
+    # One least-privilege role per function.
+    AuctionsApiRole: ${file(./iam/ApiRole.yml):AuctionsApiRole}
+    AuctionsExpirationRole: ${file(./iam/ExpirationRole.yml):AuctionsExpirationRole}
+    WinnerNotificationRole: ${file(./iam/WinnerNotificationRole.yml):WinnerNotificationRole}
+    # Eight alarms, imported from resources/AlarmsResource.yml.
+    WinnerDlqMessagesAlarm: ${file(./resources/AlarmsResource.yml):WinnerDlqMessagesAlarm}
+    WinnerDlqAgeAlarm: ${file(./resources/AlarmsResource.yml):WinnerDlqAgeAlarm}
+    ExpirationDlqMessagesAlarm: ${file(./resources/AlarmsResource.yml):ExpirationDlqMessagesAlarm}
+    ExpirationDlqAgeAlarm: ${file(./resources/AlarmsResource.yml):ExpirationDlqAgeAlarm}
+    ExpirationErrorsAlarm: ${file(./resources/AlarmsResource.yml):ExpirationErrorsAlarm}
+    ExpirationThrottlesAlarm: ${file(./resources/AlarmsResource.yml):ExpirationThrottlesAlarm}
+    NotificationErrorsAlarm: ${file(./resources/AlarmsResource.yml):NotificationErrorsAlarm}
+    NotificationThrottlesAlarm: ${file(./resources/AlarmsResource.yml):NotificationThrottlesAlarm}
+    # The scheduled target has its own DLQ, distinct from the SQS consumer DLQ.
+    # EventBridge invokes the expiration Lambda every five minutes.
+    CloseExpiredAuctionsSchedule:
+      Type: AWS::Events::Rule
+      Properties:
+        Description: Close expired auctions every five minutes.
+        ScheduleExpression: rate(5 minutes)
+        State: ENABLED
+        Targets:
+          - Id: CloseExpiredAuctions
+            Arn: !GetAtt CloseExpiredAuctionsLambdaFunction.Arn
+            DeadLetterConfig:
+              Arn: ${ssm:/nestjs-aws-serverless/${sls:stage}/auction-expiration/dlq-arn}
+            RetryPolicy:
+              MaximumEventAgeInSeconds: 3600
+              MaximumRetryAttempts: 2
+    # Allows only this EventBridge rule to invoke the expiration Lambda.
+    CloseExpiredAuctionsSchedulePermission:
+      Type: AWS::Lambda::Permission
+      Properties:
+        Action: lambda:InvokeFunction
+        FunctionName: !Ref CloseExpiredAuctionsLambdaFunction
+        Principal: events.amazonaws.com
+        SourceArn: !GetAtt CloseExpiredAuctionsSchedule.Arn
+    # EventBridge needs permission to deliver failed scheduled invocations to SQS.
+    # The queue URL comes from SSM with version 1 (a dynamic reference, resolved by CloudFormation).
+    ExpirationDlqPolicy:
+      Type: AWS::SQS::QueuePolicy
+      Properties:
+        Queues:
+          - !Sub '{{resolve:ssm:/nestjs-aws-serverless/${sls:stage}/auction-expiration/dlq-url:1}}'
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Sid: AllowEventBridgeExpirationFailures
+              Effect: Allow
+              Principal:
+                Service: events.amazonaws.com
+              Action: sqs:SendMessage
+              Resource: ${ssm:/nestjs-aws-serverless/${sls:stage}/auction-expiration/dlq-arn}
+              Condition:
+                ArnEquals:
+                  aws:SourceArn: !GetAtt CloseExpiredAuctionsSchedule.Arn
+    # Cross-stack contract for edge.yml. CloudFront reads this id as its origin.
+    # SSM parameters are regional; the edge stack runs in us-east-1, so the value
+    # must be mirrored there (documented in the learning guide/README).
+    ApiIdParameter:
+      Type: AWS::SSM::Parameter
+      Properties:
+        Name: /nestjs-aws-serverless/${sls:stage}/api/id
+        Type: String
+        Value: !Ref HttpApi
+  # Stack outputs are visible in the CloudFormation console after deploy.
+  Outputs:
+    HttpApiId:
+      Value: !Ref HttpApi

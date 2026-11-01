@@ -1,10 +1,9 @@
 import { Module } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { SQSClient } from '@aws-sdk/client-sqs';
+import { AWS_CLIENT, AwsClientLifecycle } from '../aws-client-lifecycle';
 
-// Provides one shared SQSClient built from validated config, mirroring
-// SesModule/DynamoDBModule: region comes from AWS_REGION, maxAttempts bounds
-// SDK-internal retries so a throttled call fails fast instead of hanging.
+// Provides one shared SQSClient with bounded SDK retries and idempotent shutdown cleanup.
 @Module({
   providers: [
     {
@@ -16,6 +15,8 @@ import { SQSClient } from '@aws-sdk/client-sqs';
           maxAttempts: 3,
         }),
     },
+    { provide: AWS_CLIENT, useExisting: SQSClient },
+    AwsClientLifecycle,
   ],
   exports: [SQSClient],
 })

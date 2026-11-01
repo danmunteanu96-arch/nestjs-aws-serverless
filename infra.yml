@@ -1,0 +1,286 @@
+# =============================================================================
+# infra.yml — stateful foundation for the auctions application.
+#
+# Stack name: nestjs-aws-serverless-infra-<stage>
+# Deploy order: 1) infra.yml, 2) api.yml, 3) edge.yml
+#
+# What it creates:
+#   - DynamoDB tables (auctions + notification idempotency) with TTL
+#   - private S3 bucket for auction images
+#   - SQS queues: winner notifications + two DLQs
+#   - Cognito user pool, domain and app client
+#   - SNS topic, optional email subscription, monthly budget, cost anomaly detection
+#   - SSM parameters that are the contract consumed by api.yml and edge.yml
+#
+# What it does NOT create:
+#   - Lambda functions or API Gateway (those belong to api.yml)
+#   - CloudFront (edge.yml, us-east-1)
+#   - WAF, ACM, Route 53 or a customer-managed KMS key unless explicitly enabled
+#
+# Serverless variables used in this file:
+#   ${opt:stage}      stage passed with --stage (fallback 'dev')
+#   ${sls:stage}      stage resolved by Serverless Framework
+#   ${self:...}       value from this same file
+#   ${env:NAME, d}    environment variable at deploy time, with fallback d
+#   ${param:NAME}     stage-specific value from the params block below
+#   ${file(...):Key}  include one resource from a resources/*.yml fragment
+#   ${strToBool(x)}   Serverless Framework 4 built-in resolver: 'true'/'false' -> boolean
+#
+# Cost notes:
+#   - DynamoDB on-demand, no provisioned capacity; TTL removes old test data.
+#   - PITR is OFF by default in every stage; opt in with DYNAMODB_PITR_ENABLED=true.
+#   - The customer-managed KMS key is OFF by default (LAMBDA_CMK_ENABLED=false).
+#   - The S3 bucket is private, versioned, and expires noncurrent versions in 7 days.
+#   - No WAF, NAT Gateway, EC2, RDS or ElastiCache resources exist here.
+#
+# Related files:
+#   resources/*.yml                 actual resource definitions
+#   scripts/configure-secrets.sh    writes the SecureString parameters
+#   api.yml                         reads the SSM parameters written here
+# =============================================================================
+service: nestjs-aws-serverless-infra
+
+# -----------------------------------------------------------------------------
+# provider — how Serverless talks to AWS for this stack.
+# -----------------------------------------------------------------------------
+provider:
+  name: aws
+  # Node 24 is also the Lambda runtime used by the functions in api.yml.
+  runtime: nodejs24.x
+  # All stateful resources stay in eu-central-1 (the edge stack is in us-east-1).
+  region: eu-central-1
+  # --stage prod overrides this; local experiments default to dev.
+  stage: ${opt:stage, 'dev'}
+  # Tags are copied to stack resources for cost allocation and ownership.
+  stackTags:
+    Project: ${self:custom.project}
+    Environment: ${sls:stage}
+    Owner: ${env:RESOURCE_OWNER, 'course-team'}
+
+# -----------------------------------------------------------------------------
+# params — stage-specific defaults used by custom below.
+# -----------------------------------------------------------------------------
+params:
+  default:
+    pitrEnabled: false
+  prod:
+    # PITR is a billable backup feature. Keep it off in the course profile and
+    # opt in explicitly with DYNAMODB_PITR_ENABLED=true for full production.
+    pitrEnabled: false
+
+# -----------------------------------------------------------------------------
+# custom — values resolved once and reused in Conditions/resources.
+# -----------------------------------------------------------------------------
+custom:
+  project: nestjs-aws-serverless
+  # Resolution order: env var, then the stage param, then the default above.
+  pitrEnabled: ${strToBool(${env:DYNAMODB_PITR_ENABLED, '${param:pitrEnabled}'})}
+  # A dedicated KMS key is opt-in because it has an hourly prorated monthly charge.
+  lambdaCmkEnabled: ${strToBool(${env:LAMBDA_CMK_ENABLED, 'false'})}
+
+# -----------------------------------------------------------------------------
+# resources — CloudFormation resources and conditions.
+# -----------------------------------------------------------------------------
+resources:
+  # Conditions decide whether optional (billable) resources are created at all.
+  Conditions:
+    # true only when LAMBDA_CMK_ENABLED=true.
+    UseLambdaCmk: !Equals ['${self:custom.lambdaCmkEnabled}', true]
+    # true only when ALERT_EMAIL is non-empty; without it, no email subscription/budget.
+    HasAlertEmail:
+      Fn::Not:
+        - Fn::Equals:
+            - ${env:ALERT_EMAIL, ''}
+            - ''
+    # AWS allows one dimensional service monitor per account; reuse it when supplied.
+    HasExistingCostAnomalyMonitor:
+      Fn::Not:
+        - Fn::Equals:
+            - ${env:COST_ANOMALY_MONITOR_ARN, ''}
+            - ''
+    # Create a new anomaly monitor only if an alert address exists and no ARN was supplied.
+    CreateCostAnomalyMonitor:
+      Fn::And:
+        - Condition: HasAlertEmail
+        - Fn::Not:
+            - Condition: HasExistingCostAnomalyMonitor
+
+  # Each ${file(...):Key} imports one resource definition from a fragment.
+  # Keeping fragments separate makes the stateful pieces easier to read and test.
+  Resources:
+    # --- Data stores ---------------------------------------------------------
+    AuctionsTable: ${file(./resources/AuctionTableResource.yml):AuctionsTable}
+    NotificationIdempotencyTable: ${file(./resources/NotificationIdempotencyTableResource.yml):NotificationIdempotencyTable}
+    AuctionImagesBucket: ${file(./resources/AuctionImagesBucketResource.yml):AuctionImagesBucket}
+    # --- Messaging -----------------------------------------------------------
+    WinnerNotificationsQueue: ${file(./resources/WinnerNotificationsQueueResource.yml):WinnerNotificationsQueue}
+    WinnerNotificationsDLQ: ${file(./resources/WinnerNotificationsQueueResource.yml):WinnerNotificationsDLQ}
+    AuctionExpirationDLQ: ${file(./resources/WinnerNotificationsQueueResource.yml):AuctionExpirationDLQ}
+    # --- Authentication ------------------------------------------------------
+    CognitoUserPool: ${file(./resources/CognitoAuthResource.yml):CognitoUserPool}
+    CognitoUserPoolDomain: ${file(./resources/CognitoAuthResource.yml):CognitoUserPoolDomain}
+    CognitoUserPoolClient: ${file(./resources/CognitoAuthResource.yml):CognitoUserPoolClient}
+    # --- Optional encryption key (created only with Condition: UseLambdaCmk) --
+    LambdaEnvironmentKey: ${file(./resources/SecurityResource.yml):LambdaEnvironmentKey}
+    LambdaEnvironmentKeyAlias: ${file(./resources/SecurityResource.yml):LambdaEnvironmentKeyAlias}
+    # --- Operations / cost ---------------------------------------------------
+    OpsAlertsTopic: ${file(./resources/ObservabilityResource.yml):OpsAlertsTopic}
+    OpsAlertsTopicPolicy: ${file(./resources/ObservabilityResource.yml):OpsAlertsTopicPolicy}
+    OpsAlertsEmailSubscription: ${file(./resources/ObservabilityResource.yml):OpsAlertsEmailSubscription}
+    MonthlyCostBudget: ${file(./resources/ObservabilityResource.yml):MonthlyCostBudget}
+    ServiceCostAnomalyMonitor: ${file(./resources/ObservabilityResource.yml):ServiceCostAnomalyMonitor}
+    ServiceCostAnomalySubscription: ${file(./resources/ObservabilityResource.yml):ServiceCostAnomalySubscription}
+
+    # --- SSM contract --------------------------------------------------------
+    # SSM is the cross-stack contract; names/ARNs are identifiers, not secret values.
+    # api.yml reads these with ${ssm:/nestjs-aws-serverless/<stage>/...}.
+    # Secrets are stored separately by scripts/configure-secrets.sh as SecureString.
+    #
+    # --- Auctions table identifiers -----------------------------------------
+    AuctionsTableNameParameter:
+      Type: AWS::SSM::Parameter
+      Properties:
+        Name: /nestjs-aws-serverless/${sls:stage}/auctions/table-name
+        Type: String
+        Value: ${self:custom.project}-auctions-${sls:stage}
+    AuctionsTableArnParameter:
+      Type: AWS::SSM::Parameter
+      Properties:
+        Name: /nestjs-aws-serverless/${sls:stage}/auctions/table-arn
+        Type: String
+        Value:
+          Fn::GetAtt: [AuctionsTable, Arn]
+    # --- Notification idempotency table identifiers --------------------------
+    IdempotencyTableNameParameter:
+      Type: AWS::SSM::Parameter
+      Properties:
+        Name: /nestjs-aws-serverless/${sls:stage}/notifications/idempotency-table-name
+        Type: String
+        Value: ${self:custom.project}-notification-idempotency-${sls:stage}
+    IdempotencyTableArnParameter:
+      Type: AWS::SSM::Parameter
+      Properties:
+        Name: /nestjs-aws-serverless/${sls:stage}/notifications/idempotency-table-arn
+        Type: String
+        Value:
+          Fn::GetAtt: [NotificationIdempotencyTable, Arn]
+    # --- Private images bucket identifiers -----------------------------------
+    ImagesBucketNameParameter:
+      Type: AWS::SSM::Parameter
+      Properties:
+        Name: /nestjs-aws-serverless/${sls:stage}/images/bucket-name
+        Type: String
+        Value:
+          Ref: AuctionImagesBucket
+    ImagesBucketArnParameter:
+      Type: AWS::SSM::Parameter
+      Properties:
+        Name: /nestjs-aws-serverless/${sls:stage}/images/bucket-arn
+        Type: String
+        Value:
+          Fn::GetAtt: [AuctionImagesBucket, Arn]
+    # --- Winner notification queue identifiers -------------------------------
+    WinnerQueueUrlParameter:
+      Type: AWS::SSM::Parameter
+      Properties:
+        Name: /nestjs-aws-serverless/${sls:stage}/winner-notifications/queue-url
+        Type: String
+        Value:
+          Ref: WinnerNotificationsQueue
+    WinnerQueueArnParameter:
+      Type: AWS::SSM::Parameter
+      Properties:
+        Name: /nestjs-aws-serverless/${sls:stage}/winner-notifications/queue-arn
+        Type: String
+        Value:
+          Fn::GetAtt: [WinnerNotificationsQueue, Arn]
+    # --- Winner notification DLQ identifiers ---------------------------------
+    WinnerDlqUrlParameter:
+      Type: AWS::SSM::Parameter
+      Properties:
+        Name: /nestjs-aws-serverless/${sls:stage}/winner-notifications/dlq-url
+        Type: String
+        Value:
+          Ref: WinnerNotificationsDLQ
+    WinnerDlqArnParameter:
+      Type: AWS::SSM::Parameter
+      Properties:
+        Name: /nestjs-aws-serverless/${sls:stage}/winner-notifications/dlq-arn
+        Type: String
+        Value:
+          Fn::GetAtt: [WinnerNotificationsDLQ, Arn]
+    # --- EventBridge expiration DLQ identifiers ------------------------------
+    ExpirationDlqUrlParameter:
+      Type: AWS::SSM::Parameter
+      Properties:
+        Name: /nestjs-aws-serverless/${sls:stage}/auction-expiration/dlq-url
+        Type: String
+        Value:
+          Ref: AuctionExpirationDLQ
+    ExpirationDlqArnParameter:
+      Type: AWS::SSM::Parameter
+      Properties:
+        Name: /nestjs-aws-serverless/${sls:stage}/auction-expiration/dlq-arn
+        Type: String
+        Value:
+          Fn::GetAtt: [AuctionExpirationDLQ, Arn]
+    # --- Cognito identifiers consumed by the API authorizer ------------------
+    CognitoPoolIdParameter:
+      Type: AWS::SSM::Parameter
+      Properties:
+        Name: /nestjs-aws-serverless/${sls:stage}/cognito/user-pool-id
+        Type: String
+        Value:
+          Ref: CognitoUserPool
+    CognitoClientIdParameter:
+      Type: AWS::SSM::Parameter
+      Properties:
+        Name: /nestjs-aws-serverless/${sls:stage}/cognito/client-id
+        Type: String
+        Value:
+          Ref: CognitoUserPoolClient
+    CognitoIssuerParameter:
+      Type: AWS::SSM::Parameter
+      Properties:
+        Name: /nestjs-aws-serverless/${sls:stage}/cognito/issuer-url
+        Type: String
+        Value:
+          Fn::Join:
+            - ''
+            - - 'https://cognito-idp.'
+              - Ref: AWS::Region
+              - '.amazonaws.com/'
+              - Ref: CognitoUserPool
+    # --- Optional customer-managed key ARN (only with UseLambdaCmk) ----------
+    LambdaKmsArnParameter:
+      Condition: UseLambdaCmk
+      Type: AWS::SSM::Parameter
+      Properties:
+        Name: /nestjs-aws-serverless/${sls:stage}/security/lambda-kms-key-arn
+        Type: String
+        Value:
+          Fn::GetAtt: [LambdaEnvironmentKey, Arn]
+    # --- SNS topic ARN used by every CloudWatch alarm ------------------------
+    AlertsTopicArnParameter:
+      Type: AWS::SSM::Parameter
+      Properties:
+        Name: /nestjs-aws-serverless/${sls:stage}/alerts/topic-arn
+        Type: String
+        Value:
+          Ref: OpsAlertsTopic
+
+  # Stack outputs are displayed in the CloudFormation console and can be read
+  # by scripts. They are not the cross-stack contract; SSM is (see above).
+  Outputs:
+    InfrastructureStack:
+      Value:
+        Ref: AWS::StackName
+    AuctionsTableName:
+      Value:
+        Ref: AuctionsTable
+    CognitoUserPoolId:
+      Value:
+        Ref: CognitoUserPool
+    CognitoUserPoolClientId:
+      Value:
+        Ref: CognitoUserPoolClient

@@ -24,7 +24,36 @@ export class ApiExceptionFilter implements ExceptionFilter {
           : 'Internal server error',
       path: request.route?.path ?? 'unmatched',
       requestId,
+      ...(exception instanceof HttpException
+        ? this.getSafeHealthDetails(exception)
+        : {}),
     });
+  }
+
+  // Health readiness has an explicit public schema; arbitrary exception fields stay hidden.
+  private getSafeHealthDetails(exception: HttpException):
+    | {
+        status: 'error';
+        checks: { dynamodb: 'up' | 'down'; sqs: 'up' | 'down' };
+      }
+    | undefined {
+    const payload = exception.getResponse();
+    if (typeof payload !== 'object' || payload === null) return undefined;
+    const { status, checks } = payload as {
+      status?: unknown;
+      checks?: { dynamodb?: unknown; sqs?: unknown };
+    };
+    const valid = (value: unknown): value is 'up' | 'down' =>
+      value === 'up' || value === 'down';
+    if (
+      status !== 'error' ||
+      !checks ||
+      !valid(checks.dynamodb) ||
+      !valid(checks.sqs)
+    ) {
+      return undefined;
+    }
+    return { status, checks: { dynamodb: checks.dynamodb, sqs: checks.sqs } };
   }
 
   private getSafeMessage(exception: HttpException): string | string[] {

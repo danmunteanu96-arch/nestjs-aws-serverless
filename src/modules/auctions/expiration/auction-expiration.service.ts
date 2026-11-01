@@ -56,14 +56,14 @@ export class AuctionExpirationService {
               const closed = await this.closeAuctionIfExpired(
                 auction,
                 tableName,
-                expirationTime,
+                now,
               );
               if (closed) {
                 const auctionId = auction.id?.S;
                 if (auctionId) {
                   await this.removeAuctionImage(auctionId);
                 }
-                await this.enqueueWinnerNotification(auction);
+                await this.enqueueWinnerNotification(auction, tableName);
               }
               return closed;
             }),
@@ -73,6 +73,9 @@ export class AuctionExpirationService {
 
         exclusiveStartKey = result.LastEvaluatedKey;
       } while (exclusiveStartKey);
+
+      // Pending records survive producer failures and are retried by every later schedule.
+      await this.retryPendingNotifications(tableName);
     } catch (error: unknown) {
       this.logger.error('Failed to close expired auctions');
       throw error;
@@ -85,32 +88,48 @@ export class AuctionExpirationService {
   private async closeAuctionIfExpired(
     auction: Record<string, AttributeValue>,
     tableName: string,
-    expirationTime: AttributeValue,
+    now: Date,
   ): Promise<boolean> {
     const id = auction.id?.S;
     if (!id) {
       return false;
     }
 
+    const hasWinner = Boolean(auction.highestBidderEmail?.S);
+    const expressionAttributeNames: Record<string, string> = {
+      '#id': 'id',
+      '#status': 'status',
+      '#endDate': 'endDate',
+      '#imageKey': 'imageKey',
+      '#expiresAt': 'expiresAt',
+    };
+    const expressionAttributeValues: Record<string, AttributeValue> = {
+      ':active': { S: AuctionStatus.ACTIVE },
+      ':closed': { S: AuctionStatus.CLOSED },
+      ':now': { S: now.toISOString() },
+      ':expiresAt': {
+        N: String(Math.floor(now.getTime() / 1000) + 90 * 24 * 60 * 60),
+      },
+    };
+    let updateExpression = 'SET #status = :closed, #expiresAt = :expiresAt';
+    if (hasWinner) {
+      // Sparse PENDING membership makes failed producer deliveries visible to the retry GSI.
+      updateExpression += ', #notificationStatus = :pending';
+      expressionAttributeNames['#notificationStatus'] = 'notificationStatus';
+      expressionAttributeValues[':pending'] = { S: 'PENDING' };
+    }
+    updateExpression += ' REMOVE #imageKey';
+
     try {
       await this.dynamoDb.send(
         new UpdateItemCommand({
           TableName: tableName,
           Key: { id: { S: id } },
-          UpdateExpression: 'SET #status = :closed REMOVE #imageKey',
+          UpdateExpression: updateExpression,
           ConditionExpression:
             'attribute_exists(#id) AND #status = :active AND #endDate <= :now',
-          ExpressionAttributeNames: {
-            '#id': 'id',
-            '#status': 'status',
-            '#endDate': 'endDate',
-            '#imageKey': 'imageKey',
-          },
-          ExpressionAttributeValues: {
-            ':active': { S: AuctionStatus.ACTIVE },
-            ':closed': { S: AuctionStatus.CLOSED },
-            ':now': expirationTime,
-          },
+          ExpressionAttributeNames: expressionAttributeNames,
+          ExpressionAttributeValues: expressionAttributeValues,
         }),
       );
       return true;
@@ -126,6 +145,37 @@ export class AuctionExpirationService {
     }
   }
 
+  // The sparse GSI contains only notifications still awaiting a successful SQS enqueue.
+  private async retryPendingNotifications(tableName: string): Promise<void> {
+    let exclusiveStartKey: Record<string, AttributeValue> | undefined;
+    do {
+      const result = await this.dynamoDb.send(
+        new QueryCommand({
+          TableName: tableName,
+          IndexName: 'notificationStatus-createdAt-index',
+          KeyConditionExpression: '#notificationStatus = :pending',
+          ExpressionAttributeNames: {
+            '#notificationStatus': 'notificationStatus',
+          },
+          ExpressionAttributeValues: { ':pending': { S: 'PENDING' } },
+          ExclusiveStartKey: exclusiveStartKey,
+          Limit: 100,
+        }),
+      );
+      const pending = result.Items ?? [];
+      for (let index = 0; index < pending.length; index += 10) {
+        await Promise.all(
+          pending
+            .slice(index, index + 10)
+            .map((auction) =>
+              this.enqueueWinnerNotification(auction, tableName),
+            ),
+        );
+      }
+      exclusiveStartKey = result.LastEvaluatedKey;
+    } while (exclusiveStartKey);
+  }
+
   // Best-effort cleanup keeps a private orphan visible in logs without reversing the close.
   private async removeAuctionImage(auctionId: string): Promise<void> {
     try {
@@ -138,17 +188,14 @@ export class AuctionExpirationService {
     }
   }
 
-  // Hands the "you won" email to SQS instead of sending it inline: the queue
-  // gives the downstream consumer automatic retries and a DLQ, and keeps the
-  // slow/unreliable email call out of the critical close path. Best-effort on
-  // this side by design — a failed enqueue must never fail the close itself,
-  // so SQS errors are logged and swallowed. Auctions with no bids have no
-  // highestBidderEmail and are skipped.
+  // SQS isolates SES from the close path; PENDING remains durable until enqueue succeeds.
   private async enqueueWinnerNotification(
     auction: Record<string, AttributeValue>,
+    tableName: string,
   ): Promise<void> {
     const recipient = auction.highestBidderEmail?.S;
-    if (!recipient) {
+    const auctionId = auction.id?.S;
+    if (!recipient || !auctionId) {
       return;
     }
 
@@ -157,32 +204,63 @@ export class AuctionExpirationService {
     );
     if (!queueUrl) {
       this.logger.warn(
-        'WINNER_NOTIFICATIONS_QUEUE_URL is not configured; skipping winner notification',
+        'Winner queue is not configured; notification remains pending',
+        {
+          auctionId,
+        },
       );
       return;
     }
-
-    const auctionId = auction.id?.S;
-    const messageBody = JSON.stringify({
-      auctionId,
-      recipient,
-      title: auction.title?.S ?? 'your auction',
-      winningBid: auction.currentBid?.N,
-    });
 
     try {
       await this.sqs.send(
         new SendMessageCommand({
           QueueUrl: queueUrl,
-          MessageBody: messageBody,
+          MessageBody: JSON.stringify({
+            auctionId,
+            recipient,
+            title: auction.title?.S ?? 'your auction',
+            winningBid: auction.currentBid?.N,
+          }),
         }),
       );
-      this.logger.log(`Winner notification enqueued for auction ${auctionId}`);
+      this.logger.log('Winner notification enqueued', { auctionId });
     } catch (error: unknown) {
       this.logger.error(
-        `Failed to enqueue winner notification for auction ${auctionId}`,
-        error instanceof Error ? error.stack : undefined,
+        'Failed to enqueue winner notification; it remains pending',
+        {
+          auctionId,
+          error,
+        },
       );
+      return;
     }
+
+    try {
+      await this.markNotificationSent(auctionId, tableName);
+    } catch (error: unknown) {
+      // A later producer retry is safe because the consumer claims auctionId idempotently.
+      this.logger.error('Failed to clear pending notification after enqueue', {
+        auctionId,
+        error,
+      });
+    }
+  }
+
+  // Removing the sparse attribute acknowledges enqueue without adding another GSI record.
+  private async markNotificationSent(
+    auctionId: string,
+    tableName: string,
+  ): Promise<void> {
+    await this.dynamoDb.send(
+      new UpdateItemCommand({
+        TableName: tableName,
+        Key: { id: { S: auctionId } },
+        UpdateExpression: 'REMOVE #notificationStatus',
+        ExpressionAttributeNames: {
+          '#notificationStatus': 'notificationStatus',
+        },
+      }),
+    );
   }
 }
